@@ -86,6 +86,13 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
 .tabs { display: inline-flex; gap: 4px; padding: 4px; background: var(--bg); border: 1px solid var(--line); border-radius: 12px; align-self: flex-start; }
 .tab { appearance: none; border: none; background: transparent; color: var(--muted); font: 600 0.92rem var(--f-body); padding: 7px 14px; border-radius: 9px; cursor: pointer; }
 .tab[aria-selected="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,0.12); }
+.cleanup { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.cleanup .lbl { font-weight: 600; font-size: 0.92rem; }
+.cleanup .hint { color: var(--muted); font-size: 0.85rem; flex-basis: 100%; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.seg button { appearance: none; border: none; border-left: 1px solid var(--line); background: var(--surface); color: var(--ink); font: 500 0.88rem var(--f-body); padding: 6px 12px; cursor: pointer; }
+.seg button:first-child { border-left: none; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
 .view { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .sheet-wrap { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow-x: auto; padding: 4px 0; }
 #sheet { min-height: 140px; }
@@ -135,6 +142,16 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
     <div class="result-head">
       <h2>What you hummed</h2>
       <span class="tag" id="srcTag"></span>
+    </div>
+    <div class="cleanup">
+      <span class="lbl" id="cleanLbl">Clean up</span>
+      <div class="seg" role="group" aria-labelledby="cleanLbl" id="cleanSeg">
+        <button type="button" data-level="off" aria-pressed="false">Off</button>
+        <button type="button" data-level="light" aria-pressed="false">Light</button>
+        <button type="button" data-level="medium" aria-pressed="true">Medium</button>
+        <button type="button" data-level="strong" aria-pressed="false">Strong</button>
+      </div>
+      <span class="hint" id="cleanHint"></span>
     </div>
     <div class="tabs" role="tablist" aria-label="View">
       <button class="tab" role="tab" id="tabRoll" aria-controls="viewRoll" aria-selected="true">Pitch over time</button>
@@ -266,9 +283,37 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
   }
 
   // Turn frames into notes.
+  // How hard to clean up an imperfect voice. "off" keeps every wobble that lasts.
+  const CLEANUP = {
+    off:    { minDur: 0.06, change: 0.5,  changeFrames: 3,  absorb: false, glide: false },
+    light:  { minDur: 0.08, change: 0.6,  changeFrames: 4,  absorb: true,  glide: false },
+    medium: { minDur: 0.12, change: 0.75, changeFrames: 6,  absorb: true,  glide: true },
+    strong: { minDur: 0.17, change: 0.9,  changeFrames: 9,  absorb: true,  glide: true },
+  };
+
+  // Pitch of the steadiest stretch of a note: ignores scoops, slides and cracks.
+  function steadyPitch(p) {
+    const n = p.length;
+    if (n < 6) return median(p);
+    const w = Math.max(4, Math.round(n * 0.4));
+    let best = 0, bestVar = Infinity;
+    for (let a = 0; a + w <= n; a++) {
+      let mu = 0;
+      for (let k = a; k < a + w; k++) mu += p[k];
+      mu /= w;
+      let v = 0;
+      for (let k = a; k < a + w; k++) v += (p[k] - mu) * (p[k] - mu);
+      // slight preference for the middle of the note
+      v *= 1 + 0.3 * Math.abs((a + w / 2) / n - 0.5);
+      if (v < bestVar) { bestVar = v; best = a; }
+    }
+    return median(p.slice(best, best + w));
+  }
+
   function framesToNotes(frames, opts) {
     opts = opts || {};
-    const minDur = opts.minDur || 0.08;
+    const C = CLEANUP[opts.cleanup] || CLEANUP.medium;
+    const minDur = opts.minDur || C.minDur;
     const autoTune = opts.autoTune !== false;
     const peak = frames.reduce((m, f) => Math.max(m, f.rms), 0);
     const gate = Math.max(peak * 0.12, 0.003);
@@ -319,9 +364,9 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
           continue;
         }
       }
-      if (Math.abs(m - ref) > 0.6) {
+      if (Math.abs(m - ref) > C.change) {
         off++;
-        if (off >= 4) {
+        if (off >= C.changeFrames) {
           // Start new segment at the first disagreeing frame
           const startI = i - off + 1;
           cur.pitches.splice(cur.pitches.length - (off - 1), off - 1);
@@ -342,17 +387,17 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
 
     const hopT = frames.length > 1 ? frames[1].t - frames[0].t : 0.01;
     let notes = segs
-      .map((s) => {
-        // Ignore the first/last 15% (scoops and tails) when estimating the pitch
-        const n = s.pitches.length;
-        const a = Math.floor(n * 0.15), b = Math.max(a + 1, Math.ceil(n * 0.85));
-        return {
-          start: frames[s.i0].t - hopT / 2,
-          dur: (s.i1 - s.i0 + 1) * hopT,
-          pitch: median(s.pitches.slice(a, b)),
-        };
-      })
-      .filter((n) => n.dur >= minDur && isFinite(n.pitch));
+      .map((s) => ({
+        start: frames[s.i0].t - hopT / 2,
+        dur: (s.i1 - s.i0 + 1) * hopT,
+        pitch: steadyPitch(s.pitches),
+        // how far the pitch travels from the first third to the last third (slides travel)
+        travel: s.pitches.length >= 6
+          ? median(s.pitches.slice(-Math.ceil(s.pitches.length / 3))) - median(s.pitches.slice(0, Math.ceil(s.pitches.length / 3)))
+          : 0,
+      }))
+      .filter((n) => isFinite(n.pitch));
+    notes = tidy(notes, C, minDur);
 
     // Overall tuning offset (singer slightly sharp/flat as a whole)
     let tuning = 0;
@@ -387,6 +432,54 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
       } else merged.push({ ...n });
     }
     return { notes: merged, tuningCents: Math.round(tuning * 100) };
+  }
+
+  // Remove slides, scoops and blips that the voice makes between real notes.
+  function tidy(notes, C, minDur) {
+    notes = notes.map((n) => ({ ...n }));
+    const touching = (a, b) => b.start - (a.start + a.dur) < 0.08;
+    const mergeInto = (i, j) => {
+      // note i disappears into neighbour j, which keeps its own pitch
+      const a = notes[i], b = notes[j];
+      const s = Math.min(a.start, b.start), e = Math.max(a.start + a.dur, b.start + b.dur);
+      b.start = s; b.dur = e - s;
+      notes.splice(i, 1);
+    };
+    // Slides: a short note between two touching notes, pitched between them
+    if (C.glide) {
+      for (let i = 1; i + 1 < notes.length; i++) {
+        const p = notes[i - 1], n = notes[i], q = notes[i + 1];
+        const joined = (a, b) => b.start - (a.start + a.dur) < 0.025; // no break in the voice
+        if (n.dur > minDur * 2.2 || !joined(p, n) || !joined(n, q)) continue;
+        const lo = Math.min(p.pitch, q.pitch), hi = Math.max(p.pitch, q.pitch);
+        const moving = Math.abs(n.travel) >= 0.5 && Math.sign(n.travel) === Math.sign(q.pitch - p.pitch);
+        if (hi - lo >= 1.5 && n.pitch > lo + 0.3 && n.pitch < hi - 0.3 && (moving || n.dur < minDur * 1.3)) {
+          mergeInto(i, Math.abs(n.pitch - p.pitch) <= Math.abs(n.pitch - q.pitch) ? i - 1 : i + 1);
+          i--;
+        }
+      }
+    }
+    // Too-short notes join the closest-pitched touching neighbour, or are dropped
+    for (;;) {
+      let k = -1;
+      for (let i = 0; i < notes.length; i++) if (notes[i].dur < minDur && (k < 0 || notes[i].dur < notes[k].dur)) k = i;
+      if (k < 0) break;
+      const n = notes[k];
+      const cands = [];
+      if (C.absorb && k > 0 && touching(notes[k - 1], n)) cands.push(k - 1);
+      if (C.absorb && k + 1 < notes.length && touching(n, notes[k + 1])) cands.push(k + 1);
+      if (!cands.length) { notes.splice(k, 1); continue; }
+      cands.sort((a, b) => Math.abs(notes[a].pitch - n.pitch) - Math.abs(notes[b].pitch - n.pitch));
+      mergeInto(k, cands[0]);
+    }
+    // Same pitch, back to back with no break: one note
+    const out = [];
+    for (const n of notes) {
+      const p = out[out.length - 1];
+      if (p && Math.abs(p.pitch - n.pitch) < 0.5 && n.start - (p.start + p.dur) < 0.015) p.dur = n.start + n.dur - p.start;
+      else out.push(n);
+    }
+    return out;
   }
 
   function analyze(samples, sr, opts) {
@@ -590,7 +683,7 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
     return ctx;
   }
 
-  const state = { samples: null, frames: [], notes: [], tuning: 0, source: '', playing: [], playhead: null, active: -1 };
+  const state = { cleanup: 'medium', samples: null, frames: [], notes: [], tuning: 0, source: '', playing: [], playhead: null, active: -1 };
 
   function setStatus(msg, err) { statusEl.textContent = msg; statusEl.classList.toggle('err', !!err); }
 
@@ -602,7 +695,7 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
     reanalyze();
   }
   function reanalyze() {
-    const res = E.framesToNotes(state.frames, { autoTune: $('tuneChk').checked });
+    const res = E.framesToNotes(state.frames, { autoTune: $('tuneChk').checked, cleanup: state.cleanup });
     state.notes = res.notes;
     state.tuning = res.tuningCents;
     $('srcTag').textContent = state.source;
@@ -900,6 +993,22 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
   $('stopBtn').addEventListener('click', stopAll);
   $('tuneChk').addEventListener('change', () => { if (state.frames.length) reanalyze(); });
   $('timeSig').addEventListener('change', renderSheet);
+  const CLEAN_HINTS = {
+    off: 'Shows every pitch change your voice made, including slides and wobbles.',
+    light: 'Ignores tiny blips. Keeps most of what your voice did.',
+    medium: 'Snaps to steady notes and ignores scoops, slides and cracks. Best for most humming.',
+    strong: 'Keeps only clearly held notes. Use it if Medium still shows extra notes.',
+  };
+  function setCleanup(level, save) {
+    state.cleanup = level;
+    document.querySelectorAll('#cleanSeg button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.level === level)));
+    $('cleanHint').textContent = CLEAN_HINTS[level];
+    if (save) { try { localStorage.setItem('cleanup', level); } catch (e) {} }
+    if (state.frames.length) { stopAll(); reanalyze(); }
+  }
+  document.querySelectorAll('#cleanSeg button').forEach((b) => b.addEventListener('click', () => setCleanup(b.dataset.level, true)));
+  try { const c = localStorage.getItem('cleanup'); if (c && CLEAN_HINTS[c]) state.cleanup = c; } catch (e) {}
+  setCleanup(state.cleanup, false);
   $('tabRoll').addEventListener('click', () => showTab('roll'));
   $('tabSheet').addEventListener('click', () => showTab('sheet'));
 
@@ -1004,31 +1113,39 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
 
   // ---------- Example hum (so the page opens showing how it works) ----------
   function exampleHum() {
-    // "Twinkle, Twinkle": a synthetic hum with vibrato and a slightly flat singer
+    // "Twinkle, Twinkle" hummed the way people really hum: scooping up into notes,
+    // sliding between some of them, a wobbly pitch and one voice crack.
     const seq = [60, 60, 67, 67, 69, 69, 67, 65, 65, 64, 64, 62, 62, 60];
     const durs = [0.42, 0.42, 0.42, 0.42, 0.42, 0.42, 0.8, 0.42, 0.42, 0.42, 0.42, 0.42, 0.42, 0.8];
+    const slides = [false, true, false, true, false, false, false, false, true, false, true, false, true, false];
     const outA = [];
     let ph = 0, seed = 7;
     const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
     outA.push(...new Array(Math.round(SR * 0.3)).fill(0));
     seq.forEach((m, i) => {
       const len = Math.round(durs[i] * SR);
-      const drift = (rnd() - 0.5) * 0.24 - 0.15;
+      const drift = (rnd() - 0.5) * 0.4 - 0.15;
+      const scoopDepth = -(0.6 + rnd() * 0.9);
+      const next = seq[i + 1];
+      const crackAt = i === 4 ? Math.round(len * 0.45) : -1;
       for (let j = 0; j < len; j++) {
         const t = j / SR;
-        const scoop = t < 0.05 ? -0.35 * (1 - t / 0.05) : 0;
-        const mm = m + drift + scoop + 0.18 * Math.sin(2 * Math.PI * 5.3 * t) * Math.min(1, t / 0.25);
+        const scoop = t < 0.11 ? scoopDepth * Math.pow(1 - t / 0.11, 2) : 0;
+        const slide = slides[i] && next !== undefined && durs[i] - t < 0.09 ? (next - m) * (1 - (durs[i] - t) / 0.09) : 0;
+        const mm = m + drift + scoop + slide + 0.35 * Math.sin(2 * Math.PI * 5.3 * t) * Math.min(1, t / 0.2);
         ph += (2 * Math.PI * E.midiToFreq(mm)) / SR;
-        const env = Math.min(1, t / 0.03, (len - j) / SR / 0.05);
-        outA.push(0.3 * env * (Math.sin(ph) + 0.3 * Math.sin(2 * ph) + 0.1 * Math.sin(3 * ph)) + 0.004 * (rnd() * 2 - 1));
+        const env = Math.min(1, t / 0.03, (len - j) / SR / 0.05) * (0.8 + 0.2 * Math.sin(2 * Math.PI * 2.1 * t + i));
+        const crack = crackAt >= 0 && j >= crackAt && j < crackAt + SR * 0.04;
+        const v = crack ? Math.sin(2 * ph) : Math.sin(ph) + 0.35 * Math.sin(2 * ph) + 0.12 * Math.sin(3 * ph);
+        outA.push(0.3 * env * v + 0.006 * (rnd() * 2 - 1));
       }
-      for (let j = 0; j < SR * 0.05; j++) outA.push(0.004 * (rnd() * 2 - 1));
+      if (!slides[i]) for (let j = 0; j < SR * 0.05; j++) outA.push((j < SR * 0.02 ? 0.03 : 0.006) * (rnd() * 2 - 1));
     });
     return Float32Array.from(outA);
   }
-  $('sampleBtn').addEventListener('click', () => { stopAll(); run(exampleHum(), 'Example: Twinkle, Twinkle (computer-made hum)'); setStatus('Loaded the example. Record your own hum any time.'); });
+  $('sampleBtn').addEventListener('click', () => { stopAll(); run(exampleHum(), 'Example: Twinkle, Twinkle (computer-made messy hum)'); setStatus('Loaded the example. Record your own hum any time.'); });
 
-  run(exampleHum(), 'Example: Twinkle, Twinkle (computer-made hum)');
+  run(exampleHum(), 'Example: Twinkle, Twinkle (computer-made messy hum)');
   let saved = 'roll';
   try { saved = localStorage.getItem('view') || 'roll'; } catch (e) {}
   if (saved === 'sheet') showTab('sheet');

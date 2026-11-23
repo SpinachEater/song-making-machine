@@ -86,6 +86,13 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
 .tabs { display: inline-flex; gap: 4px; padding: 4px; background: var(--bg); border: 1px solid var(--line); border-radius: 12px; align-self: flex-start; }
 .tab { appearance: none; border: none; background: transparent; color: var(--muted); font: 600 0.92rem var(--f-body); padding: 7px 14px; border-radius: 9px; cursor: pointer; }
 .tab[aria-selected="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,0.12); }
+.cleanup { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.cleanup .lbl { font-weight: 600; font-size: 0.92rem; }
+.cleanup .hint { color: var(--muted); font-size: 0.85rem; flex-basis: 100%; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.seg button { appearance: none; border: none; border-left: 1px solid var(--line); background: var(--surface); color: var(--ink); font: 500 0.88rem var(--f-body); padding: 6px 12px; cursor: pointer; }
+.seg button:first-child { border-left: none; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
 .view { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .sheet-wrap { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow-x: auto; padding: 4px 0; }
 #sheet { min-height: 140px; }
@@ -135,6 +142,16 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
     <div class="result-head">
       <h2>What you hummed</h2>
       <span class="tag" id="srcTag"></span>
+    </div>
+    <div class="cleanup">
+      <span class="lbl" id="cleanLbl">Clean up</span>
+      <div class="seg" role="group" aria-labelledby="cleanLbl" id="cleanSeg">
+        <button type="button" data-level="off" aria-pressed="false">Off</button>
+        <button type="button" data-level="light" aria-pressed="false">Light</button>
+        <button type="button" data-level="medium" aria-pressed="true">Medium</button>
+        <button type="button" data-level="strong" aria-pressed="false">Strong</button>
+      </div>
+      <span class="hint" id="cleanHint"></span>
     </div>
     <div class="tabs" role="tablist" aria-label="View">
       <button class="tab" role="tab" id="tabRoll" aria-controls="viewRoll" aria-selected="true">Pitch over time</button>
@@ -203,7 +220,7 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
     return ctx;
   }
 
-  const state = { samples: null, frames: [], notes: [], tuning: 0, source: '', playing: [], playhead: null, active: -1 };
+  const state = { cleanup: 'medium', samples: null, frames: [], notes: [], tuning: 0, source: '', playing: [], playhead: null, active: -1 };
 
   function setStatus(msg, err) { statusEl.textContent = msg; statusEl.classList.toggle('err', !!err); }
 
@@ -215,7 +232,7 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
     reanalyze();
   }
   function reanalyze() {
-    const res = E.framesToNotes(state.frames, { autoTune: $('tuneChk').checked });
+    const res = E.framesToNotes(state.frames, { autoTune: $('tuneChk').checked, cleanup: state.cleanup });
     state.notes = res.notes;
     state.tuning = res.tuningCents;
     $('srcTag').textContent = state.source;
@@ -513,6 +530,22 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
   $('stopBtn').addEventListener('click', stopAll);
   $('tuneChk').addEventListener('change', () => { if (state.frames.length) reanalyze(); });
   $('timeSig').addEventListener('change', renderSheet);
+  const CLEAN_HINTS = {
+    off: 'Shows every pitch change your voice made, including slides and wobbles.',
+    light: 'Ignores tiny blips. Keeps most of what your voice did.',
+    medium: 'Snaps to steady notes and ignores scoops, slides and cracks. Best for most humming.',
+    strong: 'Keeps only clearly held notes. Use it if Medium still shows extra notes.',
+  };
+  function setCleanup(level, save) {
+    state.cleanup = level;
+    document.querySelectorAll('#cleanSeg button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.level === level)));
+    $('cleanHint').textContent = CLEAN_HINTS[level];
+    if (save) { try { localStorage.setItem('cleanup', level); } catch (e) {} }
+    if (state.frames.length) { stopAll(); reanalyze(); }
+  }
+  document.querySelectorAll('#cleanSeg button').forEach((b) => b.addEventListener('click', () => setCleanup(b.dataset.level, true)));
+  try { const c = localStorage.getItem('cleanup'); if (c && CLEAN_HINTS[c]) state.cleanup = c; } catch (e) {}
+  setCleanup(state.cleanup, false);
   $('tabRoll').addEventListener('click', () => showTab('roll'));
   $('tabSheet').addEventListener('click', () => showTab('sheet'));
 
@@ -617,31 +650,39 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
 
   // ---------- Example hum (so the page opens showing how it works) ----------
   function exampleHum() {
-    // "Twinkle, Twinkle": a synthetic hum with vibrato and a slightly flat singer
+    // "Twinkle, Twinkle" hummed the way people really hum: scooping up into notes,
+    // sliding between some of them, a wobbly pitch and one voice crack.
     const seq = [60, 60, 67, 67, 69, 69, 67, 65, 65, 64, 64, 62, 62, 60];
     const durs = [0.42, 0.42, 0.42, 0.42, 0.42, 0.42, 0.8, 0.42, 0.42, 0.42, 0.42, 0.42, 0.42, 0.8];
+    const slides = [false, true, false, true, false, false, false, false, true, false, true, false, true, false];
     const outA = [];
     let ph = 0, seed = 7;
     const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
     outA.push(...new Array(Math.round(SR * 0.3)).fill(0));
     seq.forEach((m, i) => {
       const len = Math.round(durs[i] * SR);
-      const drift = (rnd() - 0.5) * 0.24 - 0.15;
+      const drift = (rnd() - 0.5) * 0.4 - 0.15;
+      const scoopDepth = -(0.6 + rnd() * 0.9);
+      const next = seq[i + 1];
+      const crackAt = i === 4 ? Math.round(len * 0.45) : -1;
       for (let j = 0; j < len; j++) {
         const t = j / SR;
-        const scoop = t < 0.05 ? -0.35 * (1 - t / 0.05) : 0;
-        const mm = m + drift + scoop + 0.18 * Math.sin(2 * Math.PI * 5.3 * t) * Math.min(1, t / 0.25);
+        const scoop = t < 0.11 ? scoopDepth * Math.pow(1 - t / 0.11, 2) : 0;
+        const slide = slides[i] && next !== undefined && durs[i] - t < 0.09 ? (next - m) * (1 - (durs[i] - t) / 0.09) : 0;
+        const mm = m + drift + scoop + slide + 0.35 * Math.sin(2 * Math.PI * 5.3 * t) * Math.min(1, t / 0.2);
         ph += (2 * Math.PI * E.midiToFreq(mm)) / SR;
-        const env = Math.min(1, t / 0.03, (len - j) / SR / 0.05);
-        outA.push(0.3 * env * (Math.sin(ph) + 0.3 * Math.sin(2 * ph) + 0.1 * Math.sin(3 * ph)) + 0.004 * (rnd() * 2 - 1));
+        const env = Math.min(1, t / 0.03, (len - j) / SR / 0.05) * (0.8 + 0.2 * Math.sin(2 * Math.PI * 2.1 * t + i));
+        const crack = crackAt >= 0 && j >= crackAt && j < crackAt + SR * 0.04;
+        const v = crack ? Math.sin(2 * ph) : Math.sin(ph) + 0.35 * Math.sin(2 * ph) + 0.12 * Math.sin(3 * ph);
+        outA.push(0.3 * env * v + 0.006 * (rnd() * 2 - 1));
       }
-      for (let j = 0; j < SR * 0.05; j++) outA.push(0.004 * (rnd() * 2 - 1));
+      if (!slides[i]) for (let j = 0; j < SR * 0.05; j++) outA.push((j < SR * 0.02 ? 0.03 : 0.006) * (rnd() * 2 - 1));
     });
     return Float32Array.from(outA);
   }
-  $('sampleBtn').addEventListener('click', () => { stopAll(); run(exampleHum(), 'Example: Twinkle, Twinkle (computer-made hum)'); setStatus('Loaded the example. Record your own hum any time.'); });
+  $('sampleBtn').addEventListener('click', () => { stopAll(); run(exampleHum(), 'Example: Twinkle, Twinkle (computer-made messy hum)'); setStatus('Loaded the example. Record your own hum any time.'); });
 
-  run(exampleHum(), 'Example: Twinkle, Twinkle (computer-made hum)');
+  run(exampleHum(), 'Example: Twinkle, Twinkle (computer-made messy hum)');
   let saved = 'roll';
   try { saved = localStorage.getItem('view') || 'roll'; } catch (e) {}
   if (saved === 'sheet') showTab('sheet');
