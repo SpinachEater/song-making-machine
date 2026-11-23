@@ -1,0 +1,736 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+</head>
+<body>
+<title>Hum to Piano</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=swap">
+<style>
+/* Layout: one narrow working column — record, see the notes on a piano roll, play them back. */
+:root {
+  --bg: #f3f4f7;
+  --surface: #ffffff;
+  --ink: #1a1f2e;
+  --muted: #5d6478;
+  --line: #dde0e8;
+  --key-black: #eceef3;
+  --accent: #2f55d4;
+  --accent-ink: #ffffff;
+  --rec: #d23a3a;
+  --track: #9aa3bb;
+  --ok: #1f8a5b;
+  --warn: #b26a00;
+  --f-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --f-body: "Instrument Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11141c; --surface: #191d28; --ink: #e8eaf1; --muted: #9aa1b5; --line: #2a3040;
+    --key-black: #151923; --accent: #7d9bff; --accent-ink: #0d1020; --rec: #ff6b6b; --track: #5c6684;
+    --ok: #4cc690; --warn: #f0a640; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11141c; --surface: #191d28; --ink: #e8eaf1; --muted: #9aa1b5; --line: #2a3040;
+  --key-black: #151923; --accent: #7d9bff; --accent-ink: #0d1020; --rec: #ff6b6b; --track: #5c6684;
+  --ok: #4cc690; --warn: #f0a640; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 16px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 24px 48px;
+}
+main { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+header h1 { font-family: var(--f-display); font-weight: 800; font-size: clamp(2rem, 6vw, 2.8rem); line-height: 1.05; margin: 0; letter-spacing: -0.02em; text-wrap: balance; }
+header p { margin: 8px 0 0; color: var(--muted); max-width: 60ch; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.rec-row { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+.rec-btn { position: relative; width: 96px; height: 96px; border-radius: 50%; border: none; background: var(--rec); color: #fff; cursor: pointer; flex: none; display: grid; place-items: center; font: 600 0.9rem var(--f-body); }
+.rec-btn:focus-visible, button:focus-visible, label.btn:focus-within { outline: 3px solid var(--accent); outline-offset: 3px; }
+.rec-btn svg.ring { position: absolute; inset: -6px; width: 108px; height: 108px; transform: rotate(-90deg); pointer-events: none; }
+.rec-btn svg.ring circle { fill: none; stroke: var(--rec); stroke-width: 4; stroke-linecap: round; opacity: 0.35; }
+.rec-btn.live { animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { transform: scale(0.96); } }
+@media (prefers-reduced-motion: reduce) { .rec-btn.live { animation: none; } }
+.rec-info { flex: 1; min-width: 200px; display: flex; flex-direction: column; gap: 6px; }
+.rec-info strong { font-family: var(--f-display); font-weight: 600; font-size: 1.25rem; }
+.status { color: var(--muted); font-size: 0.95rem; }
+.status.err { color: var(--rec); }
+.meter { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
+.meter i { display: block; height: 100%; width: 0; background: var(--ok); transition: width 60ms linear; }
+.alt { display: flex; gap: 10px; flex-wrap: wrap; }
+.btn { appearance: none; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: 500 0.95rem var(--f-body); padding: 9px 14px; border-radius: 10px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; }
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+.btn:disabled { opacity: 0.5; cursor: default; }
+label.btn input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.result-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.result-head h2 { font-family: var(--f-display); font-weight: 600; font-size: 1.3rem; margin: 0; }
+.tag { font: 500 0.8rem var(--f-mono); color: var(--muted); }
+.tag.sample { color: var(--warn); }
+.roll-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+canvas#roll { display: block; width: 100%; height: 260px; }
+.notes { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; margin: 0; padding: 0; }
+.note { border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px 5px; display: flex; flex-direction: column; align-items: center; min-width: 52px; cursor: pointer; background: var(--surface); color: var(--ink); font: inherit; }
+.note b { font: 700 1.05rem var(--f-mono); }
+.note small { font: 500 0.7rem var(--f-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.note.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.note.on small { color: var(--accent-ink); }
+.controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.toggle { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 0.92rem; cursor: pointer; margin-left: auto; }
+.toggle input { width: 18px; height: 18px; accent-color: var(--accent); }
+.empty { color: var(--muted); }
+details { color: var(--muted); font-size: 0.95rem; }
+details summary { cursor: pointer; color: var(--ink); font-weight: 500; }
+details ul { padding-left: 1.2em; margin: 8px 0 0; }
+.legend { display: flex; gap: 16px; font-size: 0.8rem; color: var(--muted); flex-wrap: wrap; }
+.legend span::before { content: ""; display: inline-block; width: 14px; height: 6px; border-radius: 3px; margin-right: 6px; vertical-align: middle; background: var(--accent); }
+.legend span.trk::before { background: var(--ink); opacity: 0.45; height: 2px; }
+</style>
+
+<main>
+  <header>
+    <h1>Hum to Piano</h1>
+    <p>Hum a tune for up to 10 seconds. The app finds each note you hummed, shows it on a piano roll, and plays it back on piano.</p>
+  </header>
+
+  <section class="panel" aria-label="Record">
+    <div class="rec-row">
+      <button class="rec-btn" id="recBtn" aria-label="Start recording">
+        <svg class="ring" viewBox="0 0 108 108" aria-hidden="true"><circle id="ring" cx="54" cy="54" r="51" stroke-dasharray="320.4" stroke-dashoffset="320.4"></circle></svg>
+        <span id="recLabel">Record</span>
+      </button>
+      <div class="rec-info">
+        <strong id="recTitle">Tap to hum</strong>
+        <div class="status" id="status">Hum on "mmm" or "doo", one clear note at a time. Recording stops by itself after 10 seconds.</div>
+        <div class="meter" aria-hidden="true"><i id="meter"></i></div>
+      </div>
+    </div>
+    <div class="alt">
+      <label class="btn" for="fileIn">Upload a recording<input type="file" id="fileIn" accept="audio/*"></label>
+      <button class="btn" id="sampleBtn">Load the example</button>
+    </div>
+  </section>
+
+  <section class="panel" aria-label="Your notes">
+    <div class="result-head">
+      <h2>What you hummed</h2>
+      <span class="tag" id="srcTag"></span>
+    </div>
+    <div class="roll-wrap"><canvas id="roll" aria-label="Piano roll of detected notes"></canvas></div>
+    <div class="legend"><span>Detected note</span><span class="trk">Your actual pitch</span></div>
+    <ul class="notes" id="notes"></ul>
+    <div class="controls">
+      <button class="btn primary" id="playBtn">Play on piano</button>
+      <button class="btn" id="playOrigBtn">Play my hum</button>
+      <button class="btn" id="stopBtn">Stop</button>
+      <label class="toggle"><input type="checkbox" id="tuneChk" checked> Allow for overall sharp or flat</label>
+    </div>
+    <div class="status" id="tuneInfo"></div>
+  </section>
+
+  <details>
+    <summary>Tips for clean results</summary>
+    <ul>
+      <li>Use a quiet room and hold the phone about 30 cm from your mouth.</li>
+      <li>Hum each note steadily. A tiny break or a "d" between repeated notes helps the app count them.</li>
+      <li>The number under each note is how far you were from the exact pitch, in cents (100 cents is one semitone). Tap a note to hear it.</li>
+      <li>"Allow for overall sharp or flat" helps when the whole tune drifted a little away from A = 440 Hz, as unaccompanied singing often does.</li>
+    </ul>
+  </details>
+</main>
+
+<script>
+// Hum-to-notes engine: pitch detection (YIN) and note segmentation.
+// Works in the browser and in Node (for tests). No dependencies.
+(function (root) {
+  'use strict';
+
+  const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+
+  function midiToName(m) {
+    return NOTE_NAMES[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1);
+  }
+  function freqToMidi(f) {
+    return 69 + 12 * Math.log2(f / 440);
+  }
+  function midiToFreq(m) {
+    return 440 * Math.pow(2, (m - 69) / 12);
+  }
+
+  // YIN pitch estimate for one frame. Returns {f, conf} (f = 0 when unvoiced).
+  function yinFrame(buf, offset, win, minTau, maxTau, d, threshold) {
+    for (let tau = 1; tau <= maxTau; tau++) {
+      let s = 0;
+      for (let i = 0; i < win; i++) {
+        const x = buf[offset + i] - buf[offset + i + tau];
+        s += x * x;
+      }
+      d[tau] = s;
+    }
+    // Cumulative mean normalized difference
+    d[0] = 1;
+    let run = 0;
+    for (let tau = 1; tau <= maxTau; tau++) {
+      run += d[tau];
+      d[tau] = run > 0 ? (d[tau] * tau) / run : 1;
+    }
+    let tau = -1;
+    for (let t = minTau; t <= maxTau; t++) {
+      if (d[t] < threshold) {
+        while (t + 1 <= maxTau && d[t + 1] < d[t]) t++;
+        tau = t;
+        break;
+      }
+    }
+    if (tau < 0) return { f: 0, conf: 0 };
+    let better = tau;
+    if (tau > 1 && tau < maxTau) {
+      const a = d[tau - 1], b = d[tau], c = d[tau + 1];
+      const den = a + c - 2 * b;
+      if (den !== 0) better = tau + (a - c) / (2 * den);
+    }
+    // f is in cycles per sample; the caller multiplies by the sample rate
+    return { f: 1 / better, conf: 1 - d[tau] };
+  }
+
+  function median(arr) {
+    if (!arr.length) return NaN;
+    const s = arr.slice().sort((a, b) => a - b);
+    const m = s.length >> 1;
+    return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+  }
+
+  // Track pitch over a mono signal. Returns frames [{t, rms, midi|null, conf}].
+  function trackPitch(samples, sr, opts) {
+    opts = opts || {};
+    const minF = opts.minF || 65;   // ~C2
+    const maxF = opts.maxF || 1100; // ~C#6
+    const hop = Math.round(sr * 0.01);
+    const win = Math.round(sr * 0.03);
+    const minTau = Math.max(2, Math.floor(sr / maxF));
+    const maxTau = Math.ceil(sr / minF);
+    const frameLen = win + maxTau + 1;
+    const d = new Float32Array(maxTau + 2);
+    const frames = [];
+    for (let start = 0; start + frameLen <= samples.length; start += hop) {
+      let e = 0;
+      for (let i = 0; i < win; i++) e += samples[start + i] * samples[start + i];
+      const rms = Math.sqrt(e / win);
+      const r = rms > 1e-4 ? yinFrame(samples, start, win, minTau, maxTau, d, 0.2) : { f: 0, conf: 0 };
+      const f = r.f * sr;
+      frames.push({ t: (start + win / 2) / sr, rms, midi: f > 0 ? freqToMidi(f) : null, conf: r.conf });
+    }
+    return frames;
+  }
+
+  // Turn frames into notes.
+  function framesToNotes(frames, opts) {
+    opts = opts || {};
+    const minDur = opts.minDur || 0.08;
+    const autoTune = opts.autoTune !== false;
+    const peak = frames.reduce((m, f) => Math.max(m, f.rms), 0);
+    const gate = Math.max(peak * 0.12, 0.003);
+
+    // Voiced mask
+    const v = frames.map((f) => f.midi !== null && f.rms >= gate && f.conf > 0.6);
+
+    // Median-smooth pitch over voiced neighbours (kills octave blips)
+    const sm = frames.map((f, i) => {
+      if (!v[i]) return null;
+      const w = [];
+      for (let k = i - 3; k <= i + 3; k++) if (k >= 0 && k < frames.length && v[k]) w.push(frames[k].midi);
+      return median(w);
+    });
+
+    // Segment
+    const segs = [];
+    let cur = null;
+    let gap = 0;
+    let off = 0; // consecutive frames that disagree with current segment
+    const close = () => {
+      if (cur) segs.push(cur);
+      cur = null;
+      off = 0;
+    };
+    for (let i = 0; i < frames.length; i++) {
+      if (!v[i]) {
+        gap++;
+        if (gap >= 3) close();
+        continue;
+      }
+      gap = 0;
+      const m = sm[i];
+      if (!cur) {
+        cur = { i0: i, i1: i, pitches: [m], peak: frames[i].rms };
+        continue;
+      }
+      const ref = median(cur.pitches.slice(-15));
+      // Re-attack on the same pitch: loudness dips well below the segment peak, then returns
+      const dip = frames[i].rms < cur.peak * 0.35;
+      if (dip && cur.pitches.length > 5) {
+        // look ahead: does it come back up?
+        let j = i + 1;
+        while (j < frames.length && v[j] && frames[j].rms < cur.peak * 0.5) j++;
+        if (j < frames.length && v[j] && frames[j].rms >= cur.peak * 0.5 && j - i < 15) {
+          close();
+          i = j - 1;
+          continue;
+        }
+      }
+      if (Math.abs(m - ref) > 0.6) {
+        off++;
+        if (off >= 4) {
+          // Start new segment at the first disagreeing frame
+          const startI = i - off + 1;
+          cur.pitches.splice(cur.pitches.length - (off - 1), off - 1);
+          cur.i1 = startI - 1;
+          segs.push(cur);
+          cur = { i0: startI, i1: i, pitches: sm.slice(startI, i + 1).filter((x) => x !== null), peak: frames[i].rms };
+          off = 0;
+          continue;
+        }
+      } else {
+        off = 0;
+      }
+      cur.i1 = i;
+      cur.pitches.push(m);
+      cur.peak = Math.max(cur.peak, frames[i].rms);
+    }
+    close();
+
+    const hopT = frames.length > 1 ? frames[1].t - frames[0].t : 0.01;
+    let notes = segs
+      .map((s) => {
+        // Ignore the first/last 15% (scoops and tails) when estimating the pitch
+        const n = s.pitches.length;
+        const a = Math.floor(n * 0.15), b = Math.max(a + 1, Math.ceil(n * 0.85));
+        return {
+          start: frames[s.i0].t - hopT / 2,
+          dur: (s.i1 - s.i0 + 1) * hopT,
+          pitch: median(s.pitches.slice(a, b)),
+        };
+      })
+      .filter((n) => n.dur >= minDur && isFinite(n.pitch));
+
+    // Overall tuning offset (singer slightly sharp/flat as a whole)
+    let tuning = 0;
+    if (autoTune && notes.length) {
+      // Circular mean of the fractional part, weighted by duration
+      let sx = 0, sy = 0;
+      for (const n of notes) {
+        const ang = 2 * Math.PI * (n.pitch - Math.round(n.pitch));
+        sx += Math.cos(ang) * n.dur;
+        sy += Math.sin(ang) * n.dur;
+      }
+      tuning = Math.atan2(sy, sx) / (2 * Math.PI);
+    }
+
+    notes = notes.map((n) => {
+      const midi = Math.round(n.pitch - tuning);
+      return {
+        start: n.start,
+        dur: n.dur,
+        midi,
+        name: midiToName(midi),
+        cents: Math.round((n.pitch - tuning - midi) * 100),
+      };
+    });
+
+    // Merge neighbours split by jitter (same note, touching)
+    const merged = [];
+    for (const n of notes) {
+      const p = merged[merged.length - 1];
+      if (p && p.midi === n.midi && n.start - (p.start + p.dur) < 0.015) {
+        p.dur = n.start + n.dur - p.start;
+      } else merged.push({ ...n });
+    }
+    return { notes: merged, tuningCents: Math.round(tuning * 100) };
+  }
+
+  function analyze(samples, sr, opts) {
+    const frames = trackPitch(samples, sr, opts);
+    const res = framesToNotes(frames, opts);
+    return { frames, notes: res.notes, tuningCents: res.tuningCents };
+  }
+
+  const api = { analyze, trackPitch, framesToNotes, midiToName, midiToFreq, freqToMidi };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  else root.HumEngine = api;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script>
+(function () {
+  'use strict';
+  const E = window.HumEngine;
+  const SR = 16000;
+  const MAX_SEC = 10;
+  const $ = (id) => document.getElementById(id);
+  const statusEl = $('status');
+
+  let ctx = null;
+  function audio() {
+    if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if (ctx.state === 'suspended') ctx.resume();
+    return ctx;
+  }
+
+  const state = { samples: null, frames: [], notes: [], tuning: 0, source: '', playing: [], playhead: null, active: -1 };
+
+  function setStatus(msg, err) { statusEl.textContent = msg; statusEl.classList.toggle('err', !!err); }
+
+  // ---------- Analysis ----------
+  function run(samples, source) {
+    state.samples = samples;
+    state.source = source;
+    state.frames = E.trackPitch(samples, SR);
+    reanalyze();
+  }
+  function reanalyze() {
+    const res = E.framesToNotes(state.frames, { autoTune: $('tuneChk').checked });
+    state.notes = res.notes;
+    state.tuning = res.tuningCents;
+    $('srcTag').textContent = state.source;
+    $('srcTag').classList.toggle('sample', state.source.startsWith('Example'));
+    const t = state.tuning;
+    $('tuneInfo').textContent = !state.notes.length ? '' : !$('tuneChk').checked
+      ? 'Notes are matched to standard pitch (A = 440 Hz).'
+      : Math.abs(t) < 5 ? 'Your overall pitch was right on standard tuning.'
+      : `Overall you were ${Math.abs(t)} cents ${t > 0 ? 'sharp' : 'flat'}, so notes are matched relative to that.`;
+    renderNotes();
+    drawRoll();
+  }
+
+  // ---------- Notes list ----------
+  function renderNotes() {
+    const ul = $('notes');
+    ul.textContent = '';
+    if (!state.notes.length) {
+      const li = document.createElement('li');
+      li.className = 'empty';
+      li.textContent = state.samples ? 'No clear notes found. Try humming louder, closer to the microphone, or in a quieter room.' : 'Record or upload a hum to see your notes here.';
+      ul.appendChild(li);
+    }
+    state.notes.forEach((n, i) => {
+      const li = document.createElement('li');
+      const b = document.createElement('button');
+      b.className = 'note';
+      b.type = 'button';
+      b.title = `${n.name}, ${n.dur.toFixed(2)} s`;
+      const nb = document.createElement('b'); nb.textContent = n.name;
+      const sm = document.createElement('small'); sm.textContent = (n.cents > 0 ? '+' : n.cents < 0 ? '−' : '±') + Math.abs(n.cents);
+      b.append(nb, sm);
+      b.addEventListener('click', () => { stopAll(); piano(audio(), n.midi, audio().currentTime + 0.02, 0.8); });
+      li.appendChild(b);
+      ul.appendChild(li);
+    });
+    $('playBtn').disabled = $('stopBtn').disabled = !state.notes.length;
+    $('playOrigBtn').disabled = !state.samples;
+  }
+  function highlight(i) {
+    state.active = i;
+    document.querySelectorAll('#notes .note').forEach((el, k) => el.classList.toggle('on', k === i));
+  }
+
+  // ---------- Piano roll ----------
+  function cssVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+  function drawRoll() {
+    const cv = $('roll');
+    const dpr = window.devicePixelRatio || 1;
+    const W = cv.clientWidth, H = cv.clientHeight;
+    cv.width = W * dpr; cv.height = H * dpr;
+    const g = cv.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, W, H);
+    const col = { line: cssVar('--line'), black: cssVar('--key-black'), muted: cssVar('--muted'), accent: cssVar('--accent'), track: cssVar('--track'), ink: cssVar('--ink'), surface: cssVar('--surface'), accentInk: cssVar('--accent-ink') };
+    g.fillStyle = col.surface; g.fillRect(0, 0, W, H);
+
+    const tShift = $('tuneChk').checked ? state.tuning / 100 : 0;
+    const pts = state.frames.filter((f) => f.midi !== null && f.conf > 0.6);
+    let lo, hi;
+    if (state.notes.length) {
+      lo = Math.min(...state.notes.map((n) => n.midi)) - 2;
+      hi = Math.max(...state.notes.map((n) => n.midi)) + 2;
+    } else { lo = 55; hi = 72; }
+    if (hi - lo < 12) { const c = (hi + lo) / 2; lo = Math.floor(c - 6); hi = Math.ceil(c + 6); }
+    const dur = state.samples ? state.samples.length / SR : MAX_SEC;
+    const left = 44, right = 8;
+    const rowH = H / (hi - lo + 1);
+    const x = (t) => left + (t / dur) * (W - left - right);
+    const y = (m) => H - (m - lo + 0.5) * rowH;
+
+    g.font = `500 10px ${cssVar('--f-mono') || 'monospace'}`;
+    g.textBaseline = 'middle';
+    for (let m = lo; m <= hi; m++) {
+      const isBlack = [1, 3, 6, 8, 10].includes(((m % 12) + 12) % 12);
+      if (isBlack) { g.fillStyle = col.black; g.fillRect(left, y(m) - rowH / 2, W - left, rowH); }
+      if (m % 12 === 0 || m === lo || m === hi || (rowH >= 13 && !isBlack)) {
+        g.fillStyle = m % 12 === 0 ? col.ink : col.muted;
+        g.fillText(E.midiToName(m), 6, y(m));
+      }
+      if (m % 12 === 0) { g.strokeStyle = col.line; g.beginPath(); g.moveTo(left, y(m) + rowH / 2); g.lineTo(W, y(m) + rowH / 2); g.stroke(); }
+    }
+    // seconds grid
+    g.strokeStyle = col.line; g.fillStyle = col.muted; g.textBaseline = 'bottom';
+    for (let s = 1; s < dur; s++) { g.beginPath(); g.moveTo(x(s), 0); g.lineTo(x(s), H); g.stroke(); g.fillText(s + 's', x(s) + 3, H - 2); }
+
+    // notes (bars), then the raw pitch track as a thin line on top
+    state.notes.forEach((n, i) => {
+      g.fillStyle = col.accent;
+      g.globalAlpha = state.active === -1 || state.active === i ? 1 : 0.55;
+      const bx = x(n.start), bw = Math.max(3, x(n.start + n.dur) - bx);
+      const r = Math.min(4, rowH / 2);
+      g.beginPath();
+      if (g.roundRect) g.roundRect(bx, y(n.midi) - rowH * 0.42, bw, rowH * 0.84, r); else g.rect(bx, y(n.midi) - rowH * 0.42, bw, rowH * 0.84);
+      g.fill();
+      g.globalAlpha = 1;
+    });
+    g.strokeStyle = col.ink; g.globalAlpha = 0.45; g.lineWidth = 1.25; g.beginPath();
+    let prev = null;
+    for (const f of pts) {
+      const m = f.midi - tShift;
+      if (m < lo - 0.5 || m > hi + 0.5) { prev = null; continue; }
+      if (prev && f.t - prev < 0.025) g.lineTo(x(f.t), y(m)); else g.moveTo(x(f.t), y(m));
+      prev = f.t;
+    }
+    g.stroke(); g.globalAlpha = 1; g.lineWidth = 1;
+    if (state.playhead !== null) { g.strokeStyle = col.ink; g.lineWidth = 1.5; g.beginPath(); g.moveTo(x(state.playhead), 0); g.lineTo(x(state.playhead), H); g.stroke(); g.lineWidth = 1; }
+  }
+
+  // ---------- Piano synth ----------
+  let master = null;
+  function out(ac) {
+    if (!master) {
+      const comp = ac.createDynamicsCompressor();
+      comp.threshold.value = -14; comp.ratio.value = 4;
+      master = ac.createGain(); master.gain.value = 0.8;
+      master.connect(comp); comp.connect(ac.destination);
+    }
+    return master;
+  }
+  function piano(ac, midi, when, len) {
+    const f0 = E.midiToFreq(midi);
+    const dest = out(ac);
+    const voice = ac.createGain();
+    voice.gain.value = 1;
+    voice.connect(dest);
+    const B = 0.00035; // string stiffness → slightly stretched partials
+    const bright = Math.max(0.35, Math.min(1, 1.4 - (midi - 48) / 48));
+    const sustainEnd = when + Math.max(len, 0.12);
+    const release = 0.18;
+    const nodes = [];
+    for (let k = 1; k <= 10; k++) {
+      const fk = f0 * k * Math.sqrt(1 + B * k * k);
+      if (fk > 9000) break;
+      const amp = (0.32 / Math.pow(k, 1.15)) * (k === 1 ? 1 : bright) * (k % 7 === 0 ? 0.3 : 1);
+      const decay = (2.8 - midi / 50) / (1 + 0.45 * (k - 1));
+      const o = ac.createOscillator(); o.type = 'sine'; o.frequency.value = fk;
+      const gn = ac.createGain();
+      gn.gain.setValueAtTime(0, when);
+      gn.gain.linearRampToValueAtTime(amp, when + 0.004);
+      gn.gain.setTargetAtTime(amp * 0.25, when + 0.004, Math.max(0.08, decay * 0.35));
+      gn.gain.setTargetAtTime(0, sustainEnd, release / 3);
+      o.connect(gn); gn.connect(voice);
+      o.start(when); o.stop(sustainEnd + release * 2);
+      nodes.push(o);
+    }
+    // hammer thump
+    const nb = ac.createBuffer(1, Math.round(ac.sampleRate * 0.03), ac.sampleRate);
+    const d = nb.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 3);
+    const ns = ac.createBufferSource(); ns.buffer = nb;
+    const bp = ac.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = Math.min(4000, f0 * 3); bp.Q.value = 1.2;
+    const ng = ac.createGain(); ng.gain.value = 0.08;
+    ns.connect(bp); bp.connect(ng); ng.connect(voice); ns.start(when);
+    nodes.push(ns);
+    state.playing.push(...nodes);
+  }
+
+  let raf = 0;
+  function stopAll() {
+    state.playing.forEach((n) => { try { n.stop(); } catch (e) {} });
+    state.playing = [];
+    cancelAnimationFrame(raf);
+    state.playhead = null;
+    highlight(-1);
+    drawRoll();
+  }
+  function animate(t0, total, noteMode) {
+    const ac = audio();
+    const step = () => {
+      const t = ac.currentTime - t0;
+      if (t > total) { state.playhead = null; highlight(-1); drawRoll(); return; }
+      state.playhead = t;
+      if (noteMode) highlight(state.notes.findIndex((n) => t >= n.start && t < n.start + n.dur));
+      drawRoll();
+      raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+  }
+  $('playBtn').addEventListener('click', () => {
+    if (!state.notes.length) return;
+    stopAll();
+    const ac = audio();
+    const t0 = ac.currentTime + 0.08 - state.notes[0].start + 0.0;
+    state.notes.forEach((n) => piano(ac, n.midi, t0 + n.start, n.dur));
+    const last = state.notes[state.notes.length - 1];
+    animate(t0, last.start + last.dur + 0.3, true);
+  });
+  $('playOrigBtn').addEventListener('click', () => {
+    if (!state.samples) return;
+    stopAll();
+    const ac = audio();
+    const buf = ac.createBuffer(1, state.samples.length, SR);
+    buf.copyToChannel(state.samples, 0);
+    const src = ac.createBufferSource(); src.buffer = buf; src.connect(ac.destination);
+    const t0 = ac.currentTime + 0.05;
+    src.start(t0);
+    state.playing.push(src);
+    animate(t0, buf.duration, true);
+  });
+  $('stopBtn').addEventListener('click', stopAll);
+  $('tuneChk').addEventListener('change', () => { if (state.frames.length) reanalyze(); });
+
+  // ---------- Audio input ----------
+  async function toMono16k(audioBuffer) {
+    const len = Math.ceil(audioBuffer.duration * SR);
+    const off = new OfflineAudioContext(1, Math.max(1, len), SR);
+    const src = off.createBufferSource();
+    src.buffer = audioBuffer;
+    src.connect(off.destination);
+    src.start();
+    const r = await off.startRendering();
+    let s = r.getChannelData(0);
+    if (s.length > SR * (MAX_SEC + 5)) s = s.slice(0, SR * (MAX_SEC + 5));
+    // Normalize
+    let pk = 0; for (let i = 0; i < s.length; i++) pk = Math.max(pk, Math.abs(s[i]));
+    const out = new Float32Array(s.length);
+    const k = pk > 0 ? 0.9 / pk : 1;
+    for (let i = 0; i < s.length; i++) out[i] = s[i] * k;
+    return out;
+  }
+
+  $('fileIn').addEventListener('change', async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    stopAll();
+    setStatus('Reading ' + file.name + '…');
+    try {
+      const ab = await file.arrayBuffer();
+      const decoded = await audio().decodeAudioData(ab);
+      const s = await toMono16k(decoded);
+      run(s, file.name);
+      setStatus(state.notes.length ? `Found ${state.notes.length} notes in ${file.name}.` : 'No clear notes found in that file.');
+    } catch (err) {
+      setStatus("That file couldn't be read as audio. Try an .m4a, .mp3 or .wav voice memo.", true);
+    }
+    e.target.value = '';
+  });
+
+  let rec = null;
+  async function startRec() {
+    const ac = audio();
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+    } catch (err) {
+      setStatus("The microphone isn't available here. Record a voice memo on your phone and use “Upload a recording” instead.", true);
+      return;
+    }
+    stopAll();
+    const srcNode = ac.createMediaStreamSource(stream);
+    const proc = ac.createScriptProcessor(4096, 1, 1);
+    const chunks = [];
+    const sink = ac.createGain(); sink.gain.value = 0;
+    proc.onaudioprocess = (ev) => {
+      const d = ev.inputBuffer.getChannelData(0);
+      chunks.push(new Float32Array(d));
+      let e = 0; for (let i = 0; i < d.length; i++) e += d[i] * d[i];
+      $('meter').style.width = Math.min(100, Math.sqrt(e / d.length) * 400) + '%';
+    };
+    srcNode.connect(proc); proc.connect(sink); sink.connect(ac.destination);
+    const t0 = performance.now();
+    rec = { stream, srcNode, proc, sink, chunks, rate: ac.sampleRate, timer: 0 };
+    $('recBtn').classList.add('live');
+    $('recBtn').setAttribute('aria-label', 'Stop recording');
+    $('recLabel').textContent = 'Stop';
+    $('recTitle').textContent = 'Listening…';
+    setStatus('Hum now. Tap Stop when you are done.');
+    const ring = $('ring');
+    const tick = () => {
+      if (!rec) return;
+      const el = (performance.now() - t0) / 1000;
+      ring.style.strokeDashoffset = String(320.4 * (1 - Math.min(1, el / MAX_SEC)));
+      $('recTitle').textContent = `Listening… ${Math.max(0, MAX_SEC - el).toFixed(0)}s left`;
+      if (el >= MAX_SEC) { stopRec(); return; }
+      rec.timer = requestAnimationFrame(tick);
+    };
+    rec.timer = requestAnimationFrame(tick);
+  }
+  async function stopRec() {
+    const r = rec; rec = null;
+    if (!r) return;
+    cancelAnimationFrame(r.timer);
+    r.proc.disconnect(); r.srcNode.disconnect(); r.sink.disconnect();
+    r.stream.getTracks().forEach((t) => t.stop());
+    $('recBtn').classList.remove('live');
+    $('recBtn').setAttribute('aria-label', 'Start recording');
+    $('recLabel').textContent = 'Record';
+    $('recTitle').textContent = 'Tap to hum again';
+    $('meter').style.width = '0';
+    $('ring').style.strokeDashoffset = '320.4';
+    const total = r.chunks.reduce((a, c) => a + c.length, 0);
+    const ac = audio();
+    const buf = ac.createBuffer(1, Math.max(1, total), r.rate);
+    const ch = buf.getChannelData(0);
+    let o = 0; for (const c of r.chunks) { ch.set(c, o); o += c.length; }
+    const s = await toMono16k(buf);
+    run(s, 'Your recording, ' + (total / r.rate).toFixed(1) + ' s');
+    setStatus(state.notes.length ? `Found ${state.notes.length} notes. Press “Play on piano” to hear them.` : 'No clear notes found. Try humming louder or closer to the microphone.', !state.notes.length);
+  }
+  $('recBtn').addEventListener('click', () => (rec ? stopRec() : startRec()));
+
+  // ---------- Example hum (so the page opens showing how it works) ----------
+  function exampleHum() {
+    // "Twinkle, Twinkle": a synthetic hum with vibrato and a slightly flat singer
+    const seq = [60, 60, 67, 67, 69, 69, 67, 65, 65, 64, 64, 62, 62, 60];
+    const durs = [0.42, 0.42, 0.42, 0.42, 0.42, 0.42, 0.8, 0.42, 0.42, 0.42, 0.42, 0.42, 0.42, 0.8];
+    const outA = [];
+    let ph = 0, seed = 7;
+    const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+    outA.push(...new Array(Math.round(SR * 0.3)).fill(0));
+    seq.forEach((m, i) => {
+      const len = Math.round(durs[i] * SR);
+      const drift = (rnd() - 0.5) * 0.24 - 0.15;
+      for (let j = 0; j < len; j++) {
+        const t = j / SR;
+        const scoop = t < 0.05 ? -0.35 * (1 - t / 0.05) : 0;
+        const mm = m + drift + scoop + 0.18 * Math.sin(2 * Math.PI * 5.3 * t) * Math.min(1, t / 0.25);
+        ph += (2 * Math.PI * E.midiToFreq(mm)) / SR;
+        const env = Math.min(1, t / 0.03, (len - j) / SR / 0.05);
+        outA.push(0.3 * env * (Math.sin(ph) + 0.3 * Math.sin(2 * ph) + 0.1 * Math.sin(3 * ph)) + 0.004 * (rnd() * 2 - 1));
+      }
+      for (let j = 0; j < SR * 0.05; j++) outA.push(0.004 * (rnd() * 2 - 1));
+    });
+    return Float32Array.from(outA);
+  }
+  $('sampleBtn').addEventListener('click', () => { stopAll(); run(exampleHum(), 'Example: Twinkle, Twinkle (computer-made hum)'); setStatus('Loaded the example. Record your own hum any time.'); });
+
+  run(exampleHum(), 'Example: Twinkle, Twinkle (computer-made hum)');
+  window.addEventListener('resize', drawRoll);
+  if (window.matchMedia) window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', drawRoll);
+  new MutationObserver(drawRoll).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(drawRoll);
+})();
+</script>
+
+</body>
+</html>
