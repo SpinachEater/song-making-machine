@@ -82,9 +82,37 @@
   }
 
   // Turn frames into notes.
+  // How hard to clean up an imperfect voice. "off" keeps every wobble that lasts.
+  const CLEANUP = {
+    off:    { minDur: 0.06, change: 0.5,  changeFrames: 3,  absorb: false, glide: false },
+    light:  { minDur: 0.08, change: 0.6,  changeFrames: 4,  absorb: true,  glide: false },
+    medium: { minDur: 0.12, change: 0.75, changeFrames: 6,  absorb: true,  glide: true },
+    strong: { minDur: 0.17, change: 0.9,  changeFrames: 9,  absorb: true,  glide: true },
+  };
+
+  // Pitch of the steadiest stretch of a note: ignores scoops, slides and cracks.
+  function steadyPitch(p) {
+    const n = p.length;
+    if (n < 6) return median(p);
+    const w = Math.max(4, Math.round(n * 0.4));
+    let best = 0, bestVar = Infinity;
+    for (let a = 0; a + w <= n; a++) {
+      let mu = 0;
+      for (let k = a; k < a + w; k++) mu += p[k];
+      mu /= w;
+      let v = 0;
+      for (let k = a; k < a + w; k++) v += (p[k] - mu) * (p[k] - mu);
+      // slight preference for the middle of the note
+      v *= 1 + 0.3 * Math.abs((a + w / 2) / n - 0.5);
+      if (v < bestVar) { bestVar = v; best = a; }
+    }
+    return median(p.slice(best, best + w));
+  }
+
   function framesToNotes(frames, opts) {
     opts = opts || {};
-    const minDur = opts.minDur || 0.08;
+    const C = CLEANUP[opts.cleanup] || CLEANUP.medium;
+    const minDur = opts.minDur || C.minDur;
     const autoTune = opts.autoTune !== false;
     const peak = frames.reduce((m, f) => Math.max(m, f.rms), 0);
     const gate = Math.max(peak * 0.12, 0.003);
@@ -135,9 +163,9 @@
           continue;
         }
       }
-      if (Math.abs(m - ref) > 0.6) {
+      if (Math.abs(m - ref) > C.change) {
         off++;
-        if (off >= 4) {
+        if (off >= C.changeFrames) {
           // Start new segment at the first disagreeing frame
           const startI = i - off + 1;
           cur.pitches.splice(cur.pitches.length - (off - 1), off - 1);
@@ -158,17 +186,17 @@
 
     const hopT = frames.length > 1 ? frames[1].t - frames[0].t : 0.01;
     let notes = segs
-      .map((s) => {
-        // Ignore the first/last 15% (scoops and tails) when estimating the pitch
-        const n = s.pitches.length;
-        const a = Math.floor(n * 0.15), b = Math.max(a + 1, Math.ceil(n * 0.85));
-        return {
-          start: frames[s.i0].t - hopT / 2,
-          dur: (s.i1 - s.i0 + 1) * hopT,
-          pitch: median(s.pitches.slice(a, b)),
-        };
-      })
-      .filter((n) => n.dur >= minDur && isFinite(n.pitch));
+      .map((s) => ({
+        start: frames[s.i0].t - hopT / 2,
+        dur: (s.i1 - s.i0 + 1) * hopT,
+        pitch: steadyPitch(s.pitches),
+        // how far the pitch travels from the first third to the last third (slides travel)
+        travel: s.pitches.length >= 6
+          ? median(s.pitches.slice(-Math.ceil(s.pitches.length / 3))) - median(s.pitches.slice(0, Math.ceil(s.pitches.length / 3)))
+          : 0,
+      }))
+      .filter((n) => isFinite(n.pitch));
+    notes = tidy(notes, C, minDur);
 
     // Overall tuning offset (singer slightly sharp/flat as a whole)
     let tuning = 0;
@@ -203,6 +231,54 @@
       } else merged.push({ ...n });
     }
     return { notes: merged, tuningCents: Math.round(tuning * 100) };
+  }
+
+  // Remove slides, scoops and blips that the voice makes between real notes.
+  function tidy(notes, C, minDur) {
+    notes = notes.map((n) => ({ ...n }));
+    const touching = (a, b) => b.start - (a.start + a.dur) < 0.08;
+    const mergeInto = (i, j) => {
+      // note i disappears into neighbour j, which keeps its own pitch
+      const a = notes[i], b = notes[j];
+      const s = Math.min(a.start, b.start), e = Math.max(a.start + a.dur, b.start + b.dur);
+      b.start = s; b.dur = e - s;
+      notes.splice(i, 1);
+    };
+    // Slides: a short note between two touching notes, pitched between them
+    if (C.glide) {
+      for (let i = 1; i + 1 < notes.length; i++) {
+        const p = notes[i - 1], n = notes[i], q = notes[i + 1];
+        const joined = (a, b) => b.start - (a.start + a.dur) < 0.025; // no break in the voice
+        if (n.dur > minDur * 2.2 || !joined(p, n) || !joined(n, q)) continue;
+        const lo = Math.min(p.pitch, q.pitch), hi = Math.max(p.pitch, q.pitch);
+        const moving = Math.abs(n.travel) >= 0.5 && Math.sign(n.travel) === Math.sign(q.pitch - p.pitch);
+        if (hi - lo >= 1.5 && n.pitch > lo + 0.3 && n.pitch < hi - 0.3 && (moving || n.dur < minDur * 1.3)) {
+          mergeInto(i, Math.abs(n.pitch - p.pitch) <= Math.abs(n.pitch - q.pitch) ? i - 1 : i + 1);
+          i--;
+        }
+      }
+    }
+    // Too-short notes join the closest-pitched touching neighbour, or are dropped
+    for (;;) {
+      let k = -1;
+      for (let i = 0; i < notes.length; i++) if (notes[i].dur < minDur && (k < 0 || notes[i].dur < notes[k].dur)) k = i;
+      if (k < 0) break;
+      const n = notes[k];
+      const cands = [];
+      if (C.absorb && k > 0 && touching(notes[k - 1], n)) cands.push(k - 1);
+      if (C.absorb && k + 1 < notes.length && touching(n, notes[k + 1])) cands.push(k + 1);
+      if (!cands.length) { notes.splice(k, 1); continue; }
+      cands.sort((a, b) => Math.abs(notes[a].pitch - n.pitch) - Math.abs(notes[b].pitch - n.pitch));
+      mergeInto(k, cands[0]);
+    }
+    // Same pitch, back to back with no break: one note
+    const out = [];
+    for (const n of notes) {
+      const p = out[out.length - 1];
+      if (p && Math.abs(p.pitch - n.pitch) < 0.5 && n.start - (p.start + p.dur) < 0.015) p.dur = n.start + n.dur - p.start;
+      else out.push(n);
+    }
+    return out;
   }
 
   function analyze(samples, sr, opts) {
