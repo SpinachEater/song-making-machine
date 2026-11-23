@@ -6,7 +6,11 @@ const path = require('path');
 const tpl = fs.readFileSync(path.join(__dirname, 'app/index.html'), 'utf8');
 const engine = fs.readFileSync(path.join(__dirname, 'src/engine.js'), 'utf8');
 const notation = fs.readFileSync(path.join(__dirname, 'src/notation.js'), 'utf8');
-const body = tpl.replace('/*ENGINE*/', () => engine).replace('/*NOTATION*/', () => notation);
+const musicxml = fs.readFileSync(path.join(__dirname, 'src/musicxml.js'), 'utf8');
+const body = tpl
+  .replace('/*ENGINE*/', () => engine)
+  .replace('/*NOTATION*/', () => notation)
+  .replace('/*MUSICXML*/', () => musicxml);
 fs.mkdirSync(path.join(__dirname, 'dist'), { recursive: true });
 fs.mkdirSync(path.join(__dirname, 'docs'), { recursive: true });
 fs.writeFileSync(path.join(__dirname, 'dist/hum-to-piano.html'), body);

@@ -106,6 +106,8 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
 #sheet svg .vf-stavenote.on [stroke]:not([stroke="none"]) { stroke: var(--accent); }
 #sheet .msg { color: var(--muted); padding: 16px; }
 .sheet-bar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; font-size: 0.9rem; color: var(--muted); }
+.export-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.export-row .status { flex: 1; min-width: 200px; }
 .sheet-bar .facts { font: 500 0.85rem var(--f-mono); color: var(--ink); }
 .sheet-bar label { display: inline-flex; gap: 6px; align-items: center; margin-left: auto; }
 .sheet-bar select { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; }
@@ -174,6 +176,10 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
         </label>
       </div>
       <div class="sheet-wrap"><div id="sheet" aria-label="Sheet music of detected notes"></div></div>
+      <div class="export-row">
+        <button class="btn primary" id="exportBtn" type="button">Export for notation software (.mxl)</button>
+        <span class="status" id="exportStatus">Opens in MuseScore, Finale, Sibelius, Dorico and most other notation apps.</span>
+      </div>
       <div class="status">Key and tempo are worked out from your humming. Tap a note on the staff to hear it.</div>
     </div>
     <ul class="notes" id="notes"></ul>
@@ -203,6 +209,9 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
 </script>
 <script>
 /*NOTATION*/
+</script>
+<script>
+/*MUSICXML*/
 </script>
 <script>
 (function () {
@@ -291,6 +300,7 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
     const msg = (t) => { const d = document.createElement('div'); d.className = 'msg'; d.textContent = t; host.appendChild(d); };
     if (!window.Vex || !window.Notation) { $('sheetFacts').textContent = ''; msg('The sheet music library could not load. Check your internet connection and reload the page.'); return; }
     const tr = window.Notation.transcribe(state.notes, { timeSig: $('timeSig').value });
+    state.music = tr;
     if (!tr.measures.length) { $('sheetFacts').textContent = ''; msg('Record or upload a hum to see it written out here.'); return; }
     $('sheetFacts').textContent = `${tr.key.name.replace('b', '♭').replace('#', '♯')} major · ${tr.timeSig} · ♩ = ${tr.bpm}`;
 
@@ -530,6 +540,45 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
   $('stopBtn').addEventListener('click', stopAll);
   $('tuneChk').addEventListener('change', () => { if (state.frames.length) reanalyze(); });
   $('timeSig').addEventListener('change', renderSheet);
+
+  // ---------- Export (.mxl) ----------
+  async function exportMxl() {
+    const ex = $('exportStatus');
+    ex.classList.remove('err');
+    const music = window.Notation.transcribe(state.notes, { timeSig: $('timeSig').value });
+    if (!music.measures.length) { ex.textContent = 'There are no notes to export yet. Record or upload a hum first.'; return; }
+    const stamp = new Date();
+    const title = state.source.startsWith('Example') ? 'Twinkle, Twinkle (example)' : 'Hummed tune ' + stamp.toLocaleDateString();
+    const base = 'hummed-tune-' + stamp.toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '-');
+    const bytes = window.MusicXML.toMXL(music, { title, date: stamp });
+    // Inside Claude, files are saved through Claude's download prompt, which accepts .zip but not .mxl.
+    // An .mxl file is a zip inside, so it is saved as .zip with a note to rename it.
+    let dl = null;
+    if (window.claude && typeof window.claude.use === 'function') {
+      try { dl = await window.claude.use('downloads'); } catch (e) { dl = null; }
+    }
+    if (dl) {
+      try {
+        await dl.save({ filename: base + '.mxl.zip', data: new Blob([bytes]) });
+        ex.textContent = 'Saved. Rename the file so it ends in .mxl (remove the .zip), then open it in your notation app.';
+      } catch (e) {
+        if (e && e.code === 'declined') ex.textContent = 'Export cancelled.';
+        else if (e && e.code === 'rate_limited') ex.textContent = 'A save prompt is already open. Finish that one first.';
+        else { ex.textContent = 'Saving files isn’t available in this view. Open the app in your browser to export.'; ex.classList.add('err'); }
+      }
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.recordare.musicxml' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = base + '.mxl';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    ex.textContent = 'Downloaded ' + base + '.mxl. Open it in your notation app.';
+  }
+  $('exportBtn').addEventListener('click', exportMxl);
   const CLEAN_HINTS = {
     off: 'Shows every pitch change your voice made, including slides and wobbles.',
     light: 'Ignores tiny blips. Keeps most of what your voice did.',
