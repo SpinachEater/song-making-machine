@@ -83,6 +83,25 @@ canvas#roll { display: block; width: 100%; height: 260px; }
 details { color: var(--muted); font-size: 0.95rem; }
 details summary { cursor: pointer; color: var(--ink); font-weight: 500; }
 details ul { padding-left: 1.2em; margin: 8px 0 0; }
+.tabs { display: inline-flex; gap: 4px; padding: 4px; background: var(--bg); border: 1px solid var(--line); border-radius: 12px; align-self: flex-start; }
+.tab { appearance: none; border: none; background: transparent; color: var(--muted); font: 600 0.92rem var(--f-body); padding: 7px 14px; border-radius: 9px; cursor: pointer; }
+.tab[aria-selected="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,0.12); }
+.view { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.sheet-wrap { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow-x: auto; padding: 4px 0; }
+#sheet { min-height: 140px; }
+#sheet svg { display: block; }
+[hidden] { display: none !important; }
+#sheet svg path:not([fill="none"]), #sheet svg rect:not([fill="none"]) { fill: var(--ink); }
+#sheet svg [stroke]:not([stroke="none"]) { stroke: var(--ink); }
+#sheet svg text { fill: var(--ink); }
+#sheet svg .vf-stavenote { cursor: pointer; }
+#sheet svg .vf-stavenote.on path:not([fill="none"]), #sheet svg .vf-stavenote.on rect:not([fill="none"]) { fill: var(--accent); }
+#sheet svg .vf-stavenote.on [stroke]:not([stroke="none"]) { stroke: var(--accent); }
+#sheet .msg { color: var(--muted); padding: 16px; }
+.sheet-bar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; font-size: 0.9rem; color: var(--muted); }
+.sheet-bar .facts { font: 500 0.85rem var(--f-mono); color: var(--ink); }
+.sheet-bar label { display: inline-flex; gap: 6px; align-items: center; margin-left: auto; }
+.sheet-bar select { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; }
 .legend { display: flex; gap: 16px; font-size: 0.8rem; color: var(--muted); flex-wrap: wrap; }
 .legend span::before { content: ""; display: inline-block; width: 14px; height: 6px; border-radius: 3px; margin-right: 6px; vertical-align: middle; background: var(--accent); }
 .legend span.trk::before { background: var(--ink); opacity: 0.45; height: 2px; }
@@ -117,8 +136,29 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
       <h2>What you hummed</h2>
       <span class="tag" id="srcTag"></span>
     </div>
-    <div class="roll-wrap"><canvas id="roll" aria-label="Piano roll of detected notes"></canvas></div>
-    <div class="legend"><span>Detected note</span><span class="trk">Your actual pitch</span></div>
+    <div class="tabs" role="tablist" aria-label="View">
+      <button class="tab" role="tab" id="tabRoll" aria-controls="viewRoll" aria-selected="true">Pitch over time</button>
+      <button class="tab" role="tab" id="tabSheet" aria-controls="viewSheet" aria-selected="false">Sheet music</button>
+    </div>
+    <div class="view" id="viewRoll" role="tabpanel" aria-labelledby="tabRoll">
+      <div class="roll-wrap"><canvas id="roll" aria-label="Piano roll of detected notes"></canvas></div>
+      <div class="legend"><span>Detected note</span><span class="trk">Your actual pitch</span></div>
+    </div>
+    <div class="view" id="viewSheet" role="tabpanel" aria-labelledby="tabSheet" hidden>
+      <div class="sheet-bar">
+        <span class="facts" id="sheetFacts"></span>
+        <label for="timeSig">Time
+          <select id="timeSig">
+            <option value="4/4" selected>4/4</option>
+            <option value="3/4">3/4</option>
+            <option value="2/4">2/4</option>
+            <option value="6/8">6/8</option>
+          </select>
+        </label>
+      </div>
+      <div class="sheet-wrap"><div id="sheet" aria-label="Sheet music of detected notes"></div></div>
+      <div class="status">Key and tempo are worked out from your humming. Tap a note on the staff to hear it.</div>
+    </div>
     <ul class="notes" id="notes"></ul>
     <div class="controls">
       <button class="btn primary" id="playBtn">Play on piano</button>
@@ -140,6 +180,7 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
   </details>
 </main>
 
+<script src="https://cdn.jsdelivr.net/npm/vexflow@4.2.3/build/cjs/vexflow.js"></script>
 <script>
 // Hum-to-notes engine: pitch detection (YIN) and note segmentation.
 // Works in the browser and in Node (for tests). No dependencies.
@@ -361,6 +402,179 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
 
 </script>
 <script>
+// Turns detected notes (start, dur, midi) into written music:
+// tempo, key signature, note lengths, bars and ties. No dependencies.
+(function (root) {
+  'use strict';
+
+  const SHARP_NAMES = ['c', 'c#', 'd', 'd#', 'e', 'f', 'f#', 'g', 'g#', 'a', 'a#', 'b'];
+  const FLAT_NAMES = ['c', 'db', 'd', 'eb', 'e', 'f', 'gb', 'g', 'ab', 'a', 'bb', 'b'];
+  const MAJOR = [0, 2, 4, 5, 7, 9, 11];
+  // Major keys by number of sharps (+) or flats (-)
+  const KEYS = [
+    { name: 'C', tonic: 0, acc: 0 }, { name: 'G', tonic: 7, acc: 1 }, { name: 'D', tonic: 2, acc: 2 },
+    { name: 'A', tonic: 9, acc: 3 }, { name: 'E', tonic: 4, acc: 4 }, { name: 'B', tonic: 11, acc: 5 },
+    { name: 'F#', tonic: 6, acc: 6 }, { name: 'F', tonic: 5, acc: -1 }, { name: 'Bb', tonic: 10, acc: -2 },
+    { name: 'Eb', tonic: 3, acc: -3 }, { name: 'Ab', tonic: 8, acc: -4 }, { name: 'Db', tonic: 1, acc: -5 },
+  ];
+  const SHARP_ORDER = ['f', 'c', 'g', 'd', 'a', 'e', 'b'];
+  const FLAT_ORDER = ['b', 'e', 'a', 'd', 'g', 'c', 'f'];
+
+  // Note length in eighths → VexFlow duration pieces (tied when more than one)
+  const PIECES = { 1: ['8'], 2: ['q'], 3: ['qd'], 4: ['h'], 5: ['h', '8'], 6: ['hd'], 7: ['hd', '8'], 8: ['w'] };
+
+  function median(a) {
+    if (!a.length) return NaN;
+    const s = a.slice().sort((x, y) => x - y);
+    const m = s.length >> 1;
+    return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+  }
+
+  // Estimate the length of one eighth note (seconds) from the gaps between note starts.
+  function estimateEighth(notes) {
+    const iois = [];
+    for (let i = 0; i + 1 < notes.length; i++) iois.push(notes[i + 1].start - notes[i].start);
+    if (!iois.length) return notes.length ? Math.max(0.25, notes[0].dur / 2) : 0.25;
+    // Try every tempo from 50 to 180 bpm. Score how well the gaps fit whole eighth notes,
+    // preferring tempos where the typical note is a quarter note and tempos near 100 bpm.
+    let best = 0.25, bestScore = Infinity;
+    for (let bpm = 50; bpm <= 180; bpm++) {
+      const u = 30 / bpm;
+      let err = 0;
+      const units = [];
+      for (const d of iois) {
+        const r = Math.max(1, Math.round(d / u));
+        units.push(r);
+        err += Math.pow(d / u - r, 2);
+      }
+      const score = err / iois.length + 0.05 * Math.abs(Math.log2(median(units) / 2)) + 0.02 * Math.abs(Math.log2(bpm / 100));
+      if (score < bestScore) { bestScore = score; best = u; }
+    }
+    return best;
+  }
+
+  function chooseKey(notes) {
+    let best = KEYS[0], bestScore = -1;
+    for (const k of KEYS) {
+      let s = 0;
+      for (const n of notes) if (MAJOR.includes((((n.midi - k.tonic) % 12) + 12) % 12)) s += n.dur;
+      // tie-break: fewer accidentals
+      s -= Math.abs(k.acc) * 1e-3;
+      if (s > bestScore) { bestScore = s; best = k; }
+    }
+    return best;
+  }
+
+  // Spell a MIDI note in a key: {letter, acc ('#','b',''), octave}
+  function spell(midi, key) {
+    const names = key.acc < 0 ? FLAT_NAMES : SHARP_NAMES;
+    const pc = ((midi % 12) + 12) % 12;
+    const nm = names[pc];
+    return { letter: nm[0], acc: nm.slice(1), octave: Math.floor(midi / 12) - 1 };
+  }
+  function keySigAcc(letter, key) {
+    if (key.acc > 0 && SHARP_ORDER.slice(0, key.acc).includes(letter)) return '#';
+    if (key.acc < 0 && FLAT_ORDER.slice(0, -key.acc).includes(letter)) return 'b';
+    return '';
+  }
+
+  // Main entry. opts.beatsPerBar (in quarter notes, or eighths for x/8), opts.timeSig e.g. '4/4'
+  function transcribe(notes, opts) {
+    opts = opts || {};
+    const timeSig = opts.timeSig || '4/4';
+    const [num, den] = timeSig.split('/').map(Number);
+    const barUnits = den === 8 ? num : num * 2; // bar length in eighths
+    if (!notes.length) return { measures: [], key: KEYS[0], clef: 'treble', bpm: 0, timeSig, barUnits, eighth: 0.25 };
+
+    const u = opts.eighth || estimateEighth(notes);
+    const key = chooseKey(notes);
+    const clef = median(notes.map((n) => n.midi)) >= 57 ? 'treble' : 'bass';
+
+    // Each note → {idx, units} followed by an optional rest
+    const events = [];
+    notes.forEach((n, i) => {
+      const next = notes[i + 1];
+      const span = next ? Math.max(1, Math.round((next.start - n.start) / u)) : Math.max(1, Math.round(n.dur / u + 0.35)); // singers often cut the last note short
+      // A short gap (a breath or a consonant between notes) belongs to the note; a longer one is a rest
+      const gap = next ? next.start - (n.start + n.dur) : 0;
+      const restUnits = Math.min(span - 1, Math.max(0, Math.floor(gap / u + 0.25)));
+      const len = next ? span - restUnits : span;
+      events.push({ idx: i, midi: n.midi, units: len });
+      if (span > len) events.push({ idx: -1, rest: true, units: span - len });
+    });
+
+    // Fill bars, splitting across barlines with ties
+    const measures = [];
+    let bar = [], used = 0;
+    const pushPiece = (ev, units, tieStart, tieEnd) => {
+      const pieces = piecesFor(units, used);
+      for (const [p, d] of pieces.entries()) {
+        const last = p === pieces.length - 1;
+        bar.push({ ...ev, duration: d.dur, units: d.units, tieToNext: !ev.rest && (!last || tieStart), tiedFromPrev: !ev.rest && (p > 0 || tieEnd) });
+        used += d.units;
+      }
+    };
+    for (const ev of events) {
+      let remaining = ev.units;
+      let first = true;
+      while (remaining > 0) {
+        const room = barUnits - used;
+        const take = Math.min(room, remaining);
+        remaining -= take;
+        pushPiece(ev, take, remaining > 0, !first);
+        first = false;
+        if (used >= barUnits) { measures.push(bar); bar = []; used = 0; }
+      }
+    }
+    if (bar.length) {
+      // pad the last bar with rests
+      while (used < barUnits) pushPiece({ idx: -1, rest: true }, barUnits - used, false, false);
+      measures.push(bar);
+    }
+
+    // Spelling and accidentals (accidentals last until the barline)
+    for (const m of measures) {
+      const carried = {};
+      for (const el of m) {
+        if (el.rest) continue;
+        const s = spell(el.midi, key);
+        el.key = `${s.letter}${s.acc}/${s.octave}`;
+        const slot = s.letter + s.octave;
+        const inForce = slot in carried ? carried[slot] : keySigAcc(s.letter, key);
+        el.accidental = el.tiedFromPrev && slot in carried ? null : s.acc === inForce ? null : s.acc || 'n';
+        carried[slot] = s.acc;
+      }
+    }
+    return { measures, key, clef, bpm: Math.round(30 / u), timeSig, barUnits, eighth: u };
+  }
+
+  // Split a length (in eighths) into written durations, longest first, but keep
+  // a note that starts off the beat from hiding the middle of the bar.
+  function piecesFor(units, pos) {
+    const out = [];
+    const list = PIECES[units] || null;
+    if (list) {
+      const map = { '8': 1, q: 2, qd: 3, h: 4, hd: 6, w: 8 };
+      // an off-beat start (odd position) with a long note reads better as 8th + rest of it
+      if (pos % 2 === 1 && units > 2) {
+        out.push({ dur: '8', units: 1 });
+        return out.concat(piecesFor(units - 1, pos + 1));
+      }
+      return list.map((d) => ({ dur: d, units: map[d] }));
+    }
+    // longer than a whole note: whole notes then the rest
+    let r = units;
+    while (r > 8) { out.push({ dur: 'w', units: 8 }); r -= 8; }
+    return out.concat(piecesFor(r, pos));
+  }
+
+  const api = { transcribe, estimateEighth, chooseKey, spell, KEYS };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  else root.Notation = api;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script>
 (function () {
   'use strict';
   const E = window.HumEngine;
@@ -400,6 +614,7 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
       : `Overall you were ${Math.abs(t)} cents ${t > 0 ? 'sharp' : 'flat'}, so notes are matched relative to that.`;
     renderNotes();
     drawRoll();
+    renderSheet();
   }
 
   // ---------- Notes list ----------
@@ -431,6 +646,99 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
   function highlight(i) {
     state.active = i;
     document.querySelectorAll('#notes .note').forEach((el, k) => el.classList.toggle('on', k === i));
+    (state.sheetNotes || []).forEach((sn) => {
+      const el = sn.getSVGElement && sn.getSVGElement();
+      if (el) el.classList.toggle('on', i >= 0 && sn._ev.idx === i);
+    });
+  }
+
+  // ---------- Sheet music ----------
+  function renderSheet() {
+    const host = $('sheet');
+    state.sheetNotes = [];
+    if ($('viewSheet').hidden) return; // drawn when the tab is opened
+    host.textContent = '';
+    const msg = (t) => { const d = document.createElement('div'); d.className = 'msg'; d.textContent = t; host.appendChild(d); };
+    if (!window.Vex || !window.Notation) { $('sheetFacts').textContent = ''; msg('The sheet music library could not load. Check your internet connection and reload the page.'); return; }
+    const tr = window.Notation.transcribe(state.notes, { timeSig: $('timeSig').value });
+    if (!tr.measures.length) { $('sheetFacts').textContent = ''; msg('Record or upload a hum to see it written out here.'); return; }
+    $('sheetFacts').textContent = `${tr.key.name.replace('b', '♭').replace('#', '♯')} major · ${tr.timeSig} · ♩ = ${tr.bpm}`;
+
+    const VF = Vex.Flow;
+    const [num, den] = tr.timeSig.split('/').map(Number);
+    const W = Math.max(300, host.clientWidth || 600);
+    const headW = 48 + 11 * Math.abs(tr.key.acc);
+    const timeW = 28;
+    const perLine = Math.max(1, Math.min(4, Math.floor((W - headW - 20) / 115)));
+    const lines = [];
+    for (let i = 0; i < tr.measures.length; i += perLine) lines.push(tr.measures.slice(i, i + perLine));
+    const lineH = 120;
+    const renderer = new VF.Renderer(host, VF.Renderer.Backends.SVG);
+    renderer.resize(W, lines.length * lineH + 10);
+    const g = renderer.getContext();
+    const all = [];
+    lines.forEach((ms, li) => {
+      const head = headW + (li === 0 ? timeW : 0);
+      const mw = (W - 20 - head) / perLine;
+      let x = 10;
+      const y = 10 + li * lineH;
+      ms.forEach((m, mi) => {
+        const w = mw + (mi === 0 ? head : 0);
+        const stave = new VF.Stave(x, y, w);
+        if (mi === 0) {
+          stave.addClef(tr.clef);
+          if (tr.key.acc) stave.addKeySignature(tr.key.name);
+          if (li === 0) stave.addTimeSignature(tr.timeSig);
+        }
+        if (li === lines.length - 1 && mi === ms.length - 1) stave.setEndBarType(VF.Barline.type.END);
+        stave.setContext(g).draw();
+        const notes = m.map((el) => {
+          const sn = new VF.StaveNote({
+            clef: tr.clef,
+            keys: [el.rest ? (tr.clef === 'bass' ? 'd/3' : 'b/4') : el.key],
+            duration: el.duration + (el.rest ? 'r' : ''),
+            auto_stem: true,
+          });
+          if (el.duration.endsWith('d')) VF.Dot.buildAndAttach([sn], { all: true });
+          if (el.accidental) sn.addModifier(new VF.Accidental(el.accidental), 0);
+          sn._ev = el;
+          sn._line = li;
+          return sn;
+        });
+        const voice = new VF.Voice({ num_beats: num, beat_value: den }).setMode(VF.Voice.Mode.SOFT).addTickables(notes);
+        const beams = VF.Beam.generateBeams(notes, den === 8 ? { groups: [new VF.Fraction(3, 8)] } : {});
+        new VF.Formatter().joinVoices([voice]).format([voice], Math.max(40, x + w - stave.getNoteStartX() - 16));
+        voice.draw(g, stave);
+        beams.forEach((b) => b.setContext(g).draw());
+        all.push(...notes);
+        x += w;
+      });
+    });
+    for (let i = 0; i + 1 < all.length; i++) {
+      if (!all[i]._ev.tieToNext) continue;
+      const a = all[i], b = all[i + 1];
+      const ties = a._line === b._line
+        ? [{ first_note: a, last_note: b, first_indices: [0], last_indices: [0] }]
+        : [{ first_note: a, first_indices: [0], last_indices: [0] }, { last_note: b, first_indices: [0], last_indices: [0] }];
+      ties.forEach((t) => new VF.StaveTie(t).setContext(g).draw());
+    }
+    all.forEach((sn) => {
+      const el = sn.getSVGElement && sn.getSVGElement();
+      if (!el || sn._ev.rest) return;
+      el.addEventListener('click', () => { stopAll(); piano(audio(), sn._ev.midi, audio().currentTime + 0.02, 0.8); });
+    });
+    state.sheetNotes = all;
+    if (state.active >= 0) highlight(state.active);
+  }
+
+  function showTab(which) {
+    const sheet = which === 'sheet';
+    $('tabRoll').setAttribute('aria-selected', String(!sheet));
+    $('tabSheet').setAttribute('aria-selected', String(sheet));
+    $('viewRoll').hidden = sheet;
+    $('viewSheet').hidden = !sheet;
+    try { localStorage.setItem('view', which); } catch (e) {}
+    if (sheet) renderSheet(); else drawRoll();
   }
 
   // ---------- Piano roll ----------
@@ -591,6 +899,9 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
   });
   $('stopBtn').addEventListener('click', stopAll);
   $('tuneChk').addEventListener('change', () => { if (state.frames.length) reanalyze(); });
+  $('timeSig').addEventListener('change', renderSheet);
+  $('tabRoll').addEventListener('click', () => showTab('roll'));
+  $('tabSheet').addEventListener('click', () => showTab('sheet'));
 
   // ---------- Audio input ----------
   async function toMono16k(audioBuffer) {
@@ -718,7 +1029,17 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
   $('sampleBtn').addEventListener('click', () => { stopAll(); run(exampleHum(), 'Example: Twinkle, Twinkle (computer-made hum)'); setStatus('Loaded the example. Record your own hum any time.'); });
 
   run(exampleHum(), 'Example: Twinkle, Twinkle (computer-made hum)');
-  window.addEventListener('resize', drawRoll);
+  let saved = 'roll';
+  try { saved = localStorage.getItem('view') || 'roll'; } catch (e) {}
+  if (saved === 'sheet') showTab('sheet');
+  let rsz = 0, lastW = window.innerWidth;
+  window.addEventListener('resize', () => {
+    drawRoll();
+    if (window.innerWidth === lastW) return;
+    lastW = window.innerWidth;
+    clearTimeout(rsz);
+    rsz = setTimeout(renderSheet, 150);
+  });
   if (window.matchMedia) window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', drawRoll);
   new MutationObserver(drawRoll).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(drawRoll);
