@@ -430,6 +430,7 @@ dialog p { color: var(--muted); margin: 0 0 12px; }
       });
       let j = null;
       try { j = await r.json(); } catch (e) {}
+      if (!j && [502, 503, 504].includes(r.status)) throw new Error('The reader is waking up (it sleeps when nobody has used it for a while). Try again in a minute or two.');
       if (!r.ok || !j || !j.musicxml) throw new Error((j && j.error) || 'The reader could not read these pages.');
       $('progressBar').style.width = '100%';
       await showMusic(j.musicxml, 'photo');
