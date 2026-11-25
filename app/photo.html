@@ -1,0 +1,640 @@
+<title>Photo to Sheet Music</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=swap">
+<style>
+/* Layout: one working column. 1) add photos of the pages, 2) read the music, 3) see, export and play it. */
+:root {
+  --bg: #f3f4f7;
+  --surface: #ffffff;
+  --ink: #1a1f2e;
+  --muted: #5d6478;
+  --line: #dde0e8;
+  --accent: #2f55d4;
+  --accent-ink: #ffffff;
+  --err: #d23a3a;
+  --ok: #1f8a5b;
+  --gold: #a86b00;
+  --gold-bg: #fdf3e1;
+  --paper: #fffdf8;
+  --paper-ink: #1a1f2e;
+  --desk: #e6e3dc;
+  --f-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --f-body: "Instrument Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11141c; --surface: #191d28; --ink: #e8eaf1; --muted: #9aa1b5; --line: #2a3040;
+    --accent: #7d9bff; --accent-ink: #0d1020; --err: #ff6b6b; --ok: #4cc690;
+    --gold: #f0b54a; --gold-bg: #2b2414; --desk: #232733; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11141c; --surface: #191d28; --ink: #e8eaf1; --muted: #9aa1b5; --line: #2a3040;
+  --accent: #7d9bff; --accent-ink: #0d1020; --err: #ff6b6b; --ok: #4cc690;
+  --gold: #f0b54a; --gold-bg: #2b2414; --desk: #232733; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 16px; line-height: 1.5; margin: 0;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 24px 48px;
+}
+main { max-width: 820px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+nav.modules { display: flex; gap: 6px; flex-wrap: wrap; font-size: 0.9rem; }
+nav.modules a { color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); }
+nav.modules a[aria-current="page"] { color: var(--ink); background: var(--surface); font-weight: 600; }
+nav.modules a:hover { border-color: var(--accent); }
+header h1 { font-family: var(--f-display); font-weight: 800; font-size: clamp(2rem, 6vw, 2.8rem); line-height: 1.05; margin: 10px 0 0; letter-spacing: -0.02em; text-wrap: balance; }
+header p { margin: 8px 0 0; color: var(--muted); max-width: 62ch; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.panel h2 { font-family: var(--f-display); font-weight: 600; font-size: 1.3rem; margin: 0; display: flex; align-items: center; gap: 10px; }
+.panel h2 .num { font: 700 0.85rem var(--f-mono); width: 26px; height: 26px; border-radius: 50%; display: inline-grid; place-items: center; background: var(--accent); color: var(--accent-ink); flex: none; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.btn { appearance: none; position: relative; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: 500 0.95rem var(--f-body); padding: 9px 14px; border-radius: 10px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; text-decoration: none; }
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.btn svg { width: 18px; height: 18px; flex: none; }
+.btn:focus-visible, label.btn:focus-within, .icon-btn:focus-visible, summary:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+label.btn input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.status { color: var(--muted); font-size: 0.95rem; }
+.status.err { color: var(--err); }
+.status.ok { color: var(--ok); }
+.empty { color: var(--muted); border: 1.5px dashed var(--line); border-radius: 12px; padding: 28px 16px; text-align: center; }
+[hidden] { display: none !important; }
+
+/* Pages: photos shown as sheets of paper on a desk */
+.desk { background: var(--desk); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 18px; }
+.sheet { background: var(--paper); border-radius: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.18), 0 6px 18px rgba(0,0,0,0.12); overflow: hidden; }
+.sheet-head { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 12px; border-bottom: 1px solid #ebe7de; color: #5d6478; font: 600 0.8rem var(--f-mono); }
+.sheet-head span { margin-right: auto; }
+.icon-btn { appearance: none; border: 1px solid #ddd8cc; background: #fff; color: #1a1f2e; width: 32px; height: 32px; border-radius: 8px; cursor: pointer; display: inline-grid; place-items: center; }
+.icon-btn:hover { border-color: #2f55d4; }
+.icon-btn:disabled { opacity: 0.35; cursor: default; }
+.icon-btn svg { width: 16px; height: 16px; }
+.sheet img { display: block; width: 100%; height: auto; }
+.toggle { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 0.92rem; cursor: pointer; }
+.toggle input { width: 18px; height: 18px; accent-color: var(--accent); }
+
+/* Reading progress */
+.progress { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
+.progress i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 400ms linear; }
+
+/* Score */
+.facts { display: flex; gap: 8px 18px; flex-wrap: wrap; font: 500 0.85rem var(--f-mono); color: var(--muted); }
+.facts b { color: var(--ink); font-weight: 700; }
+.score-paper { background: var(--paper); border-radius: 8px; border: 1px solid var(--line); overflow-x: auto; padding: 8px 0; min-height: 120px; }
+#score { color: var(--paper-ink); }
+.lines { display: flex; flex-wrap: wrap; gap: 8px; }
+.line-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px 5px 8px; font-size: 0.9rem; cursor: pointer; }
+.line-chip input { width: 16px; height: 16px; accent-color: var(--accent); margin: 0; }
+.tempo { display: inline-flex; align-items: center; gap: 10px; font-size: 0.92rem; color: var(--muted); }
+.tempo input { width: 150px; accent-color: var(--accent); }
+.tempo output { font: 600 0.85rem var(--f-mono); color: var(--ink); min-width: 5ch; }
+.play-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.play-pos { font: 500 0.85rem var(--f-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.badge { display: inline-flex; align-items: center; gap: 5px; font: 600 0.72rem var(--f-body); letter-spacing: 0.02em; text-transform: uppercase; color: var(--gold); background: var(--gold-bg); border-radius: 999px; padding: 3px 9px; }
+.badge svg { width: 12px; height: 12px; }
+.locked .btn.needs-full::after { content: ""; position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%; background: var(--gold) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round'%3E%3Crect x='5' y='11' width='14' height='10' rx='2'/%3E%3Cpath d='M8 11V7a4 4 0 0 1 8 0v4'/%3E%3C/svg%3E") center / 11px no-repeat; }
+
+details { color: var(--muted); font-size: 0.95rem; }
+details summary { cursor: pointer; color: var(--ink); font-weight: 500; }
+details ul { padding-left: 1.2em; margin: 8px 0 0; }
+.server-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+.server-row input { flex: 1; min-width: 220px; font: 500 0.9rem var(--f-mono); color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+code { font-family: var(--f-mono); font-size: 0.85em; }
+
+dialog { border: 1px solid var(--line); border-radius: 16px; background: var(--surface); color: var(--ink); max-width: min(440px, calc(100vw - 32px)); padding: 24px; }
+dialog::backdrop { background: rgba(10, 12, 20, 0.45); }
+dialog h3 { font-family: var(--f-display); font-size: 1.4rem; margin: 8px 0 6px; }
+dialog p { color: var(--muted); margin: 0 0 12px; }
+.full-off { font-size: 0.85rem; color: var(--muted); }
+.full-off button { appearance: none; background: none; border: none; color: var(--accent); font: inherit; cursor: pointer; padding: 0; text-decoration: underline; }
+</style>
+
+<main>
+  <header>
+    <nav class="modules" aria-label="Modules">
+      <a href="index.html">Hum to Piano</a>
+      <a href="photo.html" aria-current="page">Photo to Sheet Music</a>
+    </nav>
+    <h1>Photo to Sheet Music</h1>
+    <p>Take a photo of each page of a score. The app reads the notes, shows them as clean sheet music you can export, and plays them back on piano.</p>
+  </header>
+
+  <section class="panel" aria-labelledby="pagesTitle">
+    <h2 id="pagesTitle"><span class="num">1</span>Your pages</h2>
+    <div class="row">
+      <label class="btn primary" for="cameraIn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
+        Take a photo<input type="file" id="cameraIn" accept="image/*" capture="environment"></label>
+      <label class="btn" for="photosIn">Choose photos<input type="file" id="photosIn" accept="image/*" multiple></label>
+      <button class="btn" id="exampleBtn" type="button">Try the example</button>
+    </div>
+    <div class="empty" id="pagesEmpty">No pages yet. Photograph each page straight on, in good light, with the whole page in the frame.</div>
+    <div class="desk" id="desk" hidden></div>
+    <div class="row" id="pagesBar" hidden>
+      <label class="toggle"><input type="checkbox" id="scanLook" checked> Scan look (cleaner black and white view)</label>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="readTitle">
+    <h2 id="readTitle"><span class="num">2</span>Read the music</h2>
+    <div class="row">
+      <button class="btn primary" id="readBtn" type="button" disabled>Read the music</button>
+      <label class="btn" for="xmlIn">Open a MusicXML file<input type="file" id="xmlIn" accept=".mxl,.musicxml,.xml,application/vnd.recordare.musicxml,application/vnd.recordare.musicxml+xml"></label>
+    </div>
+    <div class="progress" id="progress" hidden><i id="progressBar"></i></div>
+    <div class="status" id="readStatus">Add a photo first. Reading takes about 15 seconds a page.</div>
+    <details id="serverBox">
+      <summary>Sheet music reader</summary>
+      <p>Reading the notes from a photo happens on a small server running the free <a href="https://github.com/liebharc/homr">homr</a> reader. Enter its address here.</p>
+      <div class="server-row">
+        <input id="serverUrl" type="url" spellcheck="false" autocomplete="off" aria-label="Reader server address">
+        <button class="btn" id="serverCheck" type="button">Check</button>
+      </div>
+      <p class="status" id="serverStatus" style="margin-top:8px"></p>
+    </details>
+  </section>
+
+  <section class="panel" aria-labelledby="musicTitle" id="musicPanel">
+    <h2 id="musicTitle"><span class="num">3</span>The music</h2>
+    <div class="empty" id="musicEmpty">The sheet music the app reads from your photos will appear here.</div>
+    <div id="musicBody" hidden>
+      <div class="facts" id="facts"></div>
+      <div class="score-paper" style="margin-top:12px"><div id="score" aria-label="Sheet music read from your photos"></div></div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn" id="exportBtn" type="button">Export for notation software (.mxl)</button>
+        <span class="status" id="exportStatus">Opens in MuseScore, Finale, Sibelius, Dorico and most other notation apps.</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel locked" aria-labelledby="playTitle" id="playPanel">
+    <h2 id="playTitle"><span class="num">4</span>Play it back <span class="badge" id="fullBadge"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l2.9 6.6 7.1.6-5.4 4.7 1.6 7L12 17.3 5.8 20.9l1.6-7L2 9.2l7.1-.6z"/></svg>Full version</span></h2>
+    <div class="play-bar">
+      <button class="btn primary needs-full" id="playBtn" type="button" disabled>Play on piano</button>
+      <button class="btn" id="stopBtn" type="button" disabled>Stop</button>
+      <span class="play-pos" id="playPos"></span>
+    </div>
+    <div class="row">
+      <span class="tempo"><label for="tempo">Speed</label><input type="range" id="tempo" min="50" max="150" step="5" value="100"><output id="tempoOut" for="tempo">100%</output></span>
+    </div>
+    <div>
+      <div class="status" style="margin-bottom:8px">Lines to play. Turn off the others to hear just your part.</div>
+      <div class="lines" id="lines"><span class="status">Read some music first.</span></div>
+    </div>
+    <div class="full-off" id="fullOff" hidden>Full version preview is on. <button type="button" id="fullOffBtn">Turn it off</button></div>
+  </section>
+
+  <details>
+    <summary>Tips for good photos</summary>
+    <ul>
+      <li>Hold the phone straight above the page, so the staff lines look parallel.</li>
+      <li>Use daylight or a bright lamp, and avoid your own shadow across the page.</li>
+      <li>Take one photo per page and add them in order. You can move pages up or down.</li>
+      <li>Printed music reads best. Handwritten music is not supported yet.</li>
+      <li>The reader picks up notes and rhythms on treble and bass clef. Dynamics, articulations and lyrics are not read yet.</li>
+    </ul>
+  </details>
+
+  <dialog id="fullDialog" aria-labelledby="fullTitle">
+    <span class="badge"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l2.9 6.6 7.1.6-5.4 4.7 1.6 7L12 17.3 5.8 20.9l1.6-7L2 9.2l7.1-.6z"/></svg>Full version</span>
+    <h3 id="fullTitle">Playback is in the full version</h3>
+    <p>Hear any score you photograph played on piano, at any speed, with just your own line if you like. The full version will be $12 a year.</p>
+    <p>Purchases open when the app reaches the app stores. Until then you can turn on a free preview.</p>
+    <form method="dialog" class="row">
+      <button class="btn primary" value="preview">Turn on the preview</button>
+      <button class="btn" value="cancel">Not now</button>
+    </form>
+  </dialog>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/opensheetmusicdisplay@2.2.1/build/opensheetmusicdisplay.min.js"></script>
+<script>
+/*SCORE*/
+</script>
+<script>
+/*MUSICXML*/
+</script>
+<script>
+/*PIANO*/
+</script>
+<script>
+(function () {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const EXAMPLE_PHOTO = '/*EXAMPLE_PHOTO*/';
+  const SECONDS_PER_PAGE = 15;
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set(k, v) { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) {} },
+  };
+
+  // ---------- Full version (placeholder until store purchases exist) ----------
+  const Entitlement = {
+    isFull() { return store.get('smm-full-preview') === '1'; },
+    setPreview(on) { store.set('smm-full-preview', on ? '1' : null); },
+  };
+  function refreshGate() {
+    const full = Entitlement.isFull();
+    $('playPanel').classList.toggle('locked', !full);
+    $('fullOff').hidden = !full;
+  }
+  function requireFull() {
+    if (Entitlement.isFull()) return Promise.resolve(true);
+    const d = $('fullDialog');
+    return new Promise((resolve) => {
+      d.addEventListener('close', () => {
+        if (d.returnValue === 'preview') { Entitlement.setPreview(true); refreshGate(); resolve(true); } else resolve(false);
+      }, { once: true });
+      d.showModal();
+    });
+  }
+  $('fullOffBtn').addEventListener('click', () => { stop(); Entitlement.setPreview(false); refreshGate(); });
+
+  // ---------- Pages ----------
+  const state = { pages: [], xml: null, score: null, osmd: null, cursorBeats: [], playing: null, source: '' };
+  let nextId = 1;
+
+  async function loadImage(src) {
+    const img = new Image();
+    img.decoding = 'async';
+    img.src = src;
+    await img.decode();
+    return img;
+  }
+  // Downscale, keep the camera's rotation, and make a JPEG to send to the reader
+  async function prepare(blob) {
+    let bmp;
+    try { bmp = await createImageBitmap(blob, { imageOrientation: 'from-image' }); } catch (e) { bmp = await loadImage(URL.createObjectURL(blob)); }
+    const MAX = 2400;
+    const s = Math.min(1, MAX / Math.max(bmp.width, bmp.height));
+    const w = Math.round(bmp.width * s), h = Math.round(bmp.height * s);
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, w, h); g.drawImage(bmp, 0, 0, w, h);
+    const original = c.toDataURL('image/jpeg', 0.9);
+    return { original, scan: scanLook(g, w, h) };
+  }
+  // A cleaner view, like a scanner: each spot is compared with the paper around it,
+  // so shadows and uneven light turn white and the printed notes turn black.
+  function scanLook(g, w, h) {
+    const im = g.getImageData(0, 0, w, h);
+    const d = im.data;
+    const lum = new Float32Array(w * h);
+    for (let i = 0, j = 0; i < d.length; i += 4, j++) lum[j] = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
+    // Paper brightness on a coarse grid: a bright percentile of each block, then smoothed
+    const B = Math.max(16, Math.round(Math.max(w, h) / 40));
+    const gw = Math.ceil(w / B), gh = Math.ceil(h / B);
+    const grid = new Float32Array(gw * gh);
+    const tmp = [];
+    for (let gy = 0; gy < gh; gy++) for (let gx = 0; gx < gw; gx++) {
+      tmp.length = 0;
+      for (let y = gy * B; y < Math.min(h, gy * B + B); y += 2) for (let x = gx * B; x < Math.min(w, gx * B + B); x += 2) tmp.push(lum[y * w + x]);
+      tmp.sort((a, b) => a - b);
+      grid[gy * gw + gx] = tmp[Math.floor(tmp.length * 0.9)] || 255;
+    }
+    const sm = new Float32Array(gw * gh);
+    for (let gy = 0; gy < gh; gy++) for (let gx = 0; gx < gw; gx++) {
+      let m = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const yy = Math.min(gh - 1, Math.max(0, gy + dy)), xx = Math.min(gw - 1, Math.max(0, gx + dx));
+        m = Math.max(m, grid[yy * gw + xx]);
+      }
+      sm[gy * gw + gx] = m;
+    }
+    for (let y = 0, j = 0; y < h; y++) {
+      const fy = Math.min(gh - 1.001, Math.max(0, y / B - 0.5)), y0 = Math.floor(fy), ty = fy - y0;
+      for (let x = 0; x < w; x++, j++) {
+        const fx = Math.min(gw - 1.001, Math.max(0, x / B - 0.5)), x0 = Math.floor(fx), tx = fx - x0;
+        const i0 = y0 * gw + x0, i1 = Math.min(gh - 1, y0 + 1) * gw + x0;
+        const x1 = Math.min(1, gw - 1 - x0);
+        const bg = (sm[i0] * (1 - tx) + sm[i0 + x1] * tx) * (1 - ty) + (sm[i1] * (1 - tx) + sm[i1 + x1] * tx) * ty;
+        let v = lum[j] / Math.max(40, bg);
+        v = Math.max(0, Math.min(1, (v - 0.45) / 0.45));
+        v = Math.pow(v, 1.4) * 255;
+        const k = j * 4;
+        d[k] = d[k + 1] = d[k + 2] = v;
+      }
+    }
+    g.putImageData(im, 0, 0);
+    return g.canvas.toDataURL('image/jpeg', 0.85);
+  }
+
+  async function addFiles(files) {
+    const list = [...files].filter((f) => f.type.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif)$/i.test(f.name));
+    if (!list.length) { setRead('Those files are not photos. Use JPEG, PNG or a phone camera photo.', 'err'); return; }
+    setRead('Adding ' + list.length + (list.length === 1 ? ' page…' : ' pages…'));
+    for (const f of list) {
+      try { state.pages.push({ id: nextId++, name: f.name, ...(await prepare(f)) }); }
+      catch (e) { setRead('One photo could not be opened (' + f.name + '). If it is a HEIC photo, try a JPEG.', 'err'); }
+    }
+    renderPages();
+    setRead(readyText());
+  }
+  function readyText() {
+    const n = state.pages.length;
+    if (!n) return 'Add a photo first. Reading takes about 15 seconds a page.';
+    return `${n} ${n === 1 ? 'page' : 'pages'} ready. Reading takes about ${n * SECONDS_PER_PAGE} seconds.`;
+  }
+
+  const ICONS = {
+    up: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"/></svg>',
+    down: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>',
+    del: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+  };
+  function renderPages() {
+    const desk = $('desk');
+    desk.textContent = '';
+    const scan = $('scanLook').checked;
+    state.pages.forEach((p, i) => {
+      const sheet = document.createElement('figure');
+      sheet.className = 'sheet'; sheet.style.margin = '0';
+      const head = document.createElement('div');
+      head.className = 'sheet-head';
+      const label = document.createElement('span');
+      label.textContent = `Page ${i + 1} of ${state.pages.length}`;
+      head.appendChild(label);
+      const mk = (icon, title, disabled, fn) => {
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = 'icon-btn'; b.innerHTML = ICONS[icon]; b.title = title; b.setAttribute('aria-label', `${title} (page ${i + 1})`);
+        b.disabled = disabled; b.addEventListener('click', fn); head.appendChild(b);
+      };
+      mk('up', 'Move up', i === 0, () => { state.pages.splice(i - 1, 0, state.pages.splice(i, 1)[0]); renderPages(); });
+      mk('down', 'Move down', i === state.pages.length - 1, () => { state.pages.splice(i + 1, 0, state.pages.splice(i, 1)[0]); renderPages(); });
+      mk('del', 'Remove', false, () => { state.pages.splice(i, 1); renderPages(); setRead(readyText()); });
+      const img = document.createElement('img');
+      img.src = scan ? p.scan : p.original;
+      img.alt = `Photo of page ${i + 1}`;
+      sheet.append(head, img);
+      desk.appendChild(sheet);
+    });
+    const has = state.pages.length > 0;
+    desk.hidden = !has; $('pagesBar').hidden = !has; $('pagesEmpty').hidden = has;
+    $('readBtn').disabled = !has || state.reading;
+  }
+  $('cameraIn').addEventListener('change', (e) => { addFiles(e.target.files); e.target.value = ''; });
+  $('photosIn').addEventListener('change', (e) => { addFiles(e.target.files); e.target.value = ''; });
+  $('scanLook').addEventListener('change', renderPages);
+  $('exampleBtn').addEventListener('click', async () => {
+    const blob = await (await fetch(EXAMPLE_PHOTO)).blob();
+    await addFiles([new File([blob], 'twinkle-example.jpg', { type: 'image/jpeg' })]);
+  });
+
+  // ---------- Reader server ----------
+  function defaultServer() {
+    const q = new URLSearchParams(location.search).get('server');
+    if (q) { store.set('smm-omr-server', q); return q; }
+    return store.get('smm-omr-server') || 'http://localhost:8765';
+  }
+  $('serverUrl').value = defaultServer();
+  const serverUrl = () => $('serverUrl').value.trim().replace(/\/+$/, '');
+  $('serverUrl').addEventListener('change', () => { store.set('smm-omr-server', serverUrl()); checkServer(); });
+  $('serverCheck').addEventListener('click', checkServer);
+  async function checkServer() {
+    const s = $('serverStatus');
+    s.className = 'status'; s.textContent = 'Checking…';
+    try {
+      const r = await fetch(serverUrl() + '/health', { signal: AbortSignal.timeout(5000) });
+      const j = await r.json();
+      if (!j.ok) throw new Error();
+      s.className = 'status ok'; s.textContent = `Connected. Using the ${j.engine} reader${j.busy ? ' (busy with another score right now)' : ''}.`;
+      return true;
+    } catch (e) {
+      s.className = 'status err';
+      s.textContent = 'The reader is not reachable at this address. Start it with python3 server/omr_server.py, or enter the address of a hosted reader.';
+      return false;
+    }
+  }
+
+  function setRead(msg, kind) { const s = $('readStatus'); s.textContent = msg; s.className = 'status' + (kind ? ' ' + kind : ''); }
+  $('readBtn').addEventListener('click', async () => {
+    if (!state.pages.length || state.reading) return;
+    state.reading = true; $('readBtn').disabled = true;
+    const n = state.pages.length, expect = n * SECONDS_PER_PAGE;
+    const t0 = performance.now();
+    $('progress').hidden = false; $('progressBar').style.width = '2%';
+    const tick = setInterval(() => {
+      const sec = (performance.now() - t0) / 1000;
+      $('progressBar').style.width = Math.min(95, (sec / expect) * 90 + 2) + '%';
+      setRead(`Reading ${n === 1 ? 'the page' : n + ' pages'}… ${Math.round(sec)} s` + (sec > expect * 1.5 ? ' (taking longer than usual)' : ''));
+    }, 500);
+    try {
+      const r = await fetch(serverUrl() + '/recognize', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pages: state.pages.map((p) => p.original) }),
+        signal: AbortSignal.timeout(n * 300000),
+      });
+      let j = null;
+      try { j = await r.json(); } catch (e) {}
+      if (!r.ok || !j || !j.musicxml) throw new Error((j && j.error) || 'The reader could not read these pages.');
+      $('progressBar').style.width = '100%';
+      await showMusic(j.musicxml, 'photo');
+      setRead(`Read ${n === 1 ? '1 page' : n + ' pages'} in ${Math.round(j.seconds || (performance.now() - t0) / 1000)} seconds. Check the result below against your photos.`, 'ok');
+    } catch (e) {
+      const unreachable = e instanceof TypeError || (e && e.name === 'TimeoutError' && (performance.now() - t0) < 6000);
+      if (unreachable) {
+        setRead('Could not reach the sheet music reader. Open “Sheet music reader” below to set it up.', 'err');
+        $('serverBox').open = true; checkServer();
+      } else setRead(e && e.name === 'TimeoutError' ? 'Reading took too long. Try fewer or sharper photos.' : e.message, 'err');
+    } finally {
+      clearInterval(tick);
+      state.reading = false; $('readBtn').disabled = !state.pages.length;
+      setTimeout(() => { $('progress').hidden = true; }, 600);
+    }
+  });
+
+  $('xmlIn').addEventListener('change', async (e) => {
+    const f = e.target.files[0]; e.target.value = '';
+    if (!f) return;
+    try {
+      const xml = await window.Score.readFile(new Uint8Array(await f.arrayBuffer()));
+      await showMusic(xml, 'file');
+      setRead(`Opened ${f.name}.`, 'ok');
+    } catch (err) { setRead(err.message || 'That file could not be opened.', 'err'); }
+  });
+
+  // ---------- Score view ----------
+  async function showMusic(xml, source) {
+    stop();
+    const score = window.Score.parse(xml); // throws a plain message on bad files
+    if (!score.notes.length) throw new Error('No notes were found. Try a sharper photo with the whole page in view.');
+    state.xml = xml; state.score = score; state.source = source;
+    $('musicEmpty').hidden = true; $('musicBody').hidden = false;
+    const lines = score.staves.length;
+    $('facts').innerHTML = '';
+    const fact = (k, v) => { const s = document.createElement('span'); s.append(k + ' '); const b = document.createElement('b'); b.textContent = v; s.appendChild(b); $('facts').appendChild(s); };
+    if (score.title) fact('Title', score.title);
+    fact('Bars', String(score.measures));
+    fact('Notes', String(score.notes.length));
+    fact('Lines', String(lines));
+    fact('Tempo', score.bpm + ' bpm' + (score.tempoGiven ? '' : ' (not marked)'));
+
+    if (!window.opensheetmusicdisplay) {
+      $('score').innerHTML = '<p class="status" style="padding:16px">The sheet music drawing library did not load. Check your connection and reload.</p>';
+    } else {
+      $('score').textContent = '';
+      state.osmd = new opensheetmusicdisplay.OpenSheetMusicDisplay($('score'), {
+        backend: 'svg', autoResize: true, drawTitle: true, drawPartNames: true, followCursor: true,
+        cursorsOptions: [{ type: 0, color: '#2f55d4', alpha: 0.45, follow: true }],
+      });
+      await state.osmd.load(xml);
+      state.osmd.zoom = $('score').clientWidth < 560 ? 0.65 : 1;
+      state.osmd.render();
+      // Remember the beat of every cursor step so playback can move the cursor
+      const c = state.osmd.cursor;
+      c.reset();
+      state.cursorBeats = [];
+      while (!c.Iterator.EndReached) { state.cursorBeats.push(c.Iterator.currentTimeStamp.RealValue * 4); c.next(); }
+      c.reset(); c.hide();
+    }
+    renderLines();
+    $('playBtn').disabled = false;
+  }
+
+  function renderLines() {
+    const box = $('lines');
+    box.textContent = '';
+    const s = state.score;
+    const names = {};
+    s.staves.forEach((l) => { names[l.name] = (names[l.name] || 0) + 1; });
+    s.staves.forEach((l, i) => {
+      const lab = document.createElement('label');
+      lab.className = 'line-chip';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.checked = true; cb.dataset.i = i;
+      const range = s.notes.filter((n) => n.part === l.part && n.staff === l.staff).map((n) => n.midi);
+      const avg = range.reduce((a, b) => a + b, 0) / range.length;
+      let name = l.name && names[l.name] === 1 ? l.name : (l.name ? `${l.name} ${l.staff === 1 ? 'upper' : 'lower'}` : `Line ${i + 1}`);
+      if (s.staves.length > 1 && (!l.name || /piano|voice/i.test(l.name))) name = `Line ${i + 1} (${avg >= 60 ? 'treble' : 'bass'})`;
+      lab.append(cb, document.createTextNode(name));
+      box.appendChild(lab);
+    });
+  }
+
+  // ---------- Export ----------
+  $('exportBtn').addEventListener('click', async () => {
+    const ex = $('exportStatus'); ex.classList.remove('err');
+    if (!state.xml) return;
+    const bytes = window.MusicXML.xmlToMXL(state.xml);
+    const base = (state.score.title || 'scanned-score').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'scanned-score';
+    let dl = null;
+    if (window.claude && typeof window.claude.use === 'function') { try { dl = await window.claude.use('downloads'); } catch (e) { dl = null; } }
+    if (dl) {
+      try { await dl.save({ filename: base + '.mxl.zip', data: new Blob([bytes]) }); ex.textContent = 'Saved. Rename the file so it ends in .mxl (remove the .zip), then open it in your notation app.'; }
+      catch (e) { ex.textContent = e && e.code === 'declined' ? 'Export cancelled.' : 'Saving files isn’t available in this view. Open the app in your browser to export.'; }
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.recordare.musicxml' }));
+    const a = document.createElement('a'); a.href = url; a.download = base + '.mxl';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    ex.textContent = 'Downloaded ' + base + '.mxl. Open it in your notation app.';
+  });
+
+  // ---------- Playback (full version) ----------
+  let ctx = null;
+  function audio() {
+    if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if (ctx.state === 'suspended') ctx.resume();
+    return ctx;
+  }
+  const speed = () => Number($('tempo').value) / 100;
+  $('tempo').addEventListener('input', () => { $('tempoOut').textContent = $('tempo').value + '%'; });
+  $('tempo').addEventListener('change', () => { if (state.playing) { const b = state.playing.beatNow(); play(b); } });
+
+  function secAt(map, beat) { // quarter notes -> seconds at written tempo
+    let seg = map[0];
+    for (const s of map) if (s.beat <= beat + 1e-9) seg = s; else break;
+    return seg.sec + ((beat - seg.beat) * 60) / seg.bpm;
+  }
+  function beatAt(map, sec) {
+    let seg = map[0];
+    for (const s of map) if (s.sec <= sec + 1e-9) seg = s; else break;
+    return seg.beat + ((sec - seg.sec) * seg.bpm) / 60;
+  }
+
+  function play(fromBeat) {
+    stop(true);
+    const s = state.score;
+    if (!s) return;
+    const on = new Set([...document.querySelectorAll('#lines input')].filter((c) => c.checked).map((c) => {
+      const l = s.staves[+c.dataset.i]; return l.part + '|' + l.staff;
+    }));
+    if (!on.size) { $('playPos').textContent = 'Turn on at least one line.'; return; }
+    const ac = audio();
+    const k = speed();
+    const startSec = secAt(s.tempoMap, fromBeat || 0);
+    const notes = s.notes.filter((n) => on.has(n.part + '|' + n.staff) && n.start + 1e-6 >= startSec);
+    const t0 = ac.currentTime + 0.12;
+    const endSec = s.duration;
+    const vel = Math.min(1, 1.6 / Math.sqrt(Math.max(1, on.size)));
+    let idx = 0;
+    const nodes = [];
+    const p = {
+      nodes, timer: 0, raf: 0,
+      beatNow() { return beatAt(s.tempoMap, startSec + Math.max(0, ac.currentTime - t0) * k); },
+    };
+    // Schedule a couple of seconds ahead at a time, so long scores stay light
+    const pump = () => {
+      const horizon = ac.currentTime + 2;
+      while (idx < notes.length) {
+        const n = notes[idx];
+        const when = t0 + (n.start - startSec) / k;
+        if (when > horizon) break;
+        nodes.push(...window.Piano.note(ac, n.midi, when, n.dur / k, vel));
+        idx++;
+      }
+      if (nodes.length > 4000) nodes.splice(0, nodes.length - 4000);
+    };
+    pump();
+    p.timer = setInterval(pump, 250);
+    const c = state.osmd && state.osmd.cursor;
+    let ci = 0;
+    if (c) { c.reset(); c.show(); }
+    const step = () => {
+      const sec = startSec + (ac.currentTime - t0) * k;
+      if (sec > endSec + 0.3) { stop(); return; }
+      const beat = beatAt(s.tempoMap, Math.max(startSec, sec));
+      const bar = s.notes.reduce((m, n) => (n.beat <= beat ? Math.max(m, n.measure) : m), 1);
+      $('playPos').textContent = `Bar ${bar} of ${s.measures}`;
+      if (c) {
+        let target = ci;
+        while (target + 1 < state.cursorBeats.length && state.cursorBeats[target + 1] <= beat + 1e-6) target++;
+        while (ci < target) { c.next(); ci++; }
+      }
+      p.raf = requestAnimationFrame(step);
+    };
+    p.raf = requestAnimationFrame(step);
+    state.playing = p;
+    $('stopBtn').disabled = false;
+    $('playBtn').textContent = 'Restart';
+  }
+  function stop(keepUi) {
+    const p = state.playing;
+    if (p) {
+      clearInterval(p.timer); cancelAnimationFrame(p.raf);
+      p.nodes.forEach((n) => { try { n.stop(); } catch (e) {} });
+      state.playing = null;
+    }
+    if (!keepUi) {
+      $('stopBtn').disabled = true;
+      $('playBtn').textContent = 'Play on piano';
+      $('playPos').textContent = '';
+      if (state.osmd) { try { state.osmd.cursor.hide(); } catch (e) {} }
+    }
+  }
+  $('playBtn').addEventListener('click', async () => {
+    if (!state.score) return;
+    if (!(await requireFull())) return;
+    play(0);
+  });
+  $('stopBtn').addEventListener('click', () => stop());
+  $('lines').addEventListener('change', () => { if (state.playing) play(state.playing.beatNow()); });
+
+  refreshGate();
+})();
+</script>

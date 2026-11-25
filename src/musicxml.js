@@ -139,7 +139,11 @@
 
   // Compressed MusicXML: a zip whose first entry is "mimetype", then the container and the score
   function toMXL(music, opts) {
-    const xml = toMusicXML(music, opts);
+    return xmlToMXL(toMusicXML(music, opts));
+  }
+
+  // Packs any MusicXML text (for example from the photo reader) as .mxl
+  function xmlToMXL(xml) {
     return zip([
       { name: 'mimetype', data: 'application/vnd.recordare.musicxml' },
       {
@@ -152,7 +156,7 @@
     ]);
   }
 
-  const api = { toMusicXML, toMXL, zip, crc32 };
+  const api = { toMusicXML, toMXL, xmlToMXL, zip, crc32 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.MusicXML = api;
 })(typeof window !== 'undefined' ? window : globalThis);
