@@ -1,8 +1,9 @@
 # Sheet music reader (server/): builds and tests its Docker container, and on main
 # publishes it to a free Hugging Face Space so the live Photo to Sheet Music page can use it.
 #
-# One-time setup: add a Hugging Face access token (with "write" permission) as the
-# repository secret HF_TOKEN. The Space <your-hf-name>/sheet-music-reader is created
+# Publishing is manual (Actions > Sheet music reader > Run workflow), because Hugging Face
+# Docker Spaces need a paid PRO plan. One-time setup: add a Hugging Face access token
+# (with "write" permission) as the repository secret HF_TOKEN. The Space <your-hf-name>/sheet-music-reader is created
 # automatically, and its address is shown in the run's summary.
 name: Sheet music reader
 
@@ -33,7 +34,7 @@ jobs:
 
   deploy:
     needs: test
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
