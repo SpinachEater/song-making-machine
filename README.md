@@ -22,6 +22,10 @@ PATH=.venv/bin:$PATH python3 server/omr_server.py     # http://localhost:8765
 
 The first run downloads homr's models. A page takes about 5 to 15 seconds on a laptop CPU. The page looks for the reader at `http://localhost:8765`; change it under "Sheet music reader", or open the page with `?server=https://your-reader.example`. Settings: `OMR_PORT`, `OMR_HOST` (use `0.0.0.0` on a hosted server), `OMR_ALLOWED_ORIGINS` (for example `https://spinacheater.github.io`), `OMR_MAX_PAGES`.
 
+**On a Windows computer.** Put `server/omr_server.py` in the same folder as `server/windows/Start sheet music reader.bat`, then double-click the .bat file. The first run installs homr (about 5 minutes). After that it starts the reader and opens the live Photo to Sheet Music page, which finds the reader at `http://localhost:8765`.
+
+**Hosting.** `server/Dockerfile` packs the reader into a container. On every PR that touches `server/`, the "Sheet music reader" GitHub workflow builds it and checks that it reads `test/fixtures/twinkle-photo.jpg` correctly. Run the workflow by hand from the Actions tab to publish it to a Hugging Face Space. That needs the repository secret `HF_TOKEN` and a Hugging Face PRO plan ($9/month), because Docker Spaces are no longer free. A page read uses about 1.5 GB of memory, so small free hosts (512 MB) are too small.
+
 Known limits of homr: it reads pitch and rhythm on treble and bass clef, not dynamics, articulations or lyrics. Hymn-style choir music (two staves) reads well; open scores with four separate choir staves get paired into two piano-style grand staves, so their timing comes out wrong. Handwritten music is not supported.
 
 ## How it works
