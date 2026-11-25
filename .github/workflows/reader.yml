@@ -1,0 +1,71 @@
+# Sheet music reader (server/): builds and tests its Docker container, and on main
+# publishes it to a free Hugging Face Space so the live Photo to Sheet Music page can use it.
+#
+# One-time setup: add a Hugging Face access token (with "write" permission) as the
+# repository secret HF_TOKEN. The Space <your-hf-name>/sheet-music-reader is created
+# automatically, and its address is shown in the run's summary.
+name: Sheet music reader
+
+on:
+  pull_request:
+    paths: ["server/**", "test/fixtures/twinkle-photo.jpg", ".github/workflows/reader.yml"]
+  push:
+    branches: ["main"]
+    paths: ["server/**", ".github/workflows/reader.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit tests
+        run: python3 test/omr_server.test.py
+      - name: Build the container
+        run: docker build -t sheet-music-reader server
+      - name: Read a test photo with the container
+        run: |
+          docker run -d --name reader -p 7860:7860 sheet-music-reader
+          python3 server/smoke_test.py http://localhost:7860 test/fixtures/twinkle-photo.jpg || (docker logs reader; exit 1)
+
+  deploy:
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish to Hugging Face Spaces
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          if [ -z "$HF_TOKEN" ]; then
+            echo "### Not published" >> "$GITHUB_STEP_SUMMARY"
+            echo "Add a Hugging Face access token as the repository secret HF_TOKEN to publish the reader." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          pip install --quiet "huggingface_hub>=0.25,<1"
+          python3 - <<'PY'
+          import os, shutil, tempfile
+          from huggingface_hub import HfApi
+          api = HfApi(token=os.environ["HF_TOKEN"])
+          user = api.whoami()["name"]
+          repo = f"{user}/sheet-music-reader"
+          api.create_repo(repo, repo_type="space", space_sdk="docker", exist_ok=True)
+          api.add_space_variable(repo, "OMR_ALLOWED_ORIGINS",
+                                 "https://spinacheater.github.io,http://localhost:8080,http://127.0.0.1:8080")
+          d = tempfile.mkdtemp()
+          for f in ["Dockerfile", "requirements.txt", "omr_server.py"]:
+              shutil.copy(os.path.join("server", f), d)
+          shutil.copy("server/hf/README.md", d)
+          api.upload_folder(folder_path=d, repo_id=repo, repo_type="space",
+                            commit_message=f"Deploy {os.environ['GITHUB_SHA'][:7]}")
+          host = repo.replace("/", "-").replace("_", "-").lower()
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as s:
+              s.write(f"### Reader published\n\nSpace: https://huggingface.co/spaces/{repo}\n\n"
+                      f"Reader address: https://{host}.hf.space\n\n"
+                      "It takes a few minutes to build the first time.\n")
+          print("Reader address: https://%s.hf.space" % host)
+          PY
