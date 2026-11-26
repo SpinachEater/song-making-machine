@@ -59,7 +59,19 @@
   }
 
   // Track pitch over a mono signal. Returns frames [{t, rms, midi|null, conf}].
-  function trackPitch(samples, sr, opts) {
+  // Raw squared-difference d(tau) for one frame (no normalisation).
+  function diffAt(buf, offset, win, tau) {
+    let s = 0;
+    for (let i = 0; i < win; i++) {
+      const x = buf[offset + i] - buf[offset + i + tau];
+      s += x * x;
+    }
+    return s;
+  }
+
+  // Set up pitch tracking. Pitch is searched on a half-rate copy (4x less work),
+  // then refined at full rate around the best match, so accuracy is unchanged.
+  function pitchTracker(samples, sr, opts) {
     opts = opts || {};
     const minF = opts.minF || 65;   // ~C2
     const maxF = opts.maxF || 1100; // ~C#6
@@ -67,19 +79,74 @@
     const win = Math.round(sr * 0.03);
     const minTau = Math.max(2, Math.floor(sr / maxF));
     const maxTau = Math.ceil(sr / minF);
-    const frameLen = win + maxTau + 1;
-    const d = new Float32Array(maxTau + 2);
-    const frames = [];
-    for (let start = 0; start + frameLen <= samples.length; start += hop) {
+    const frameLen = win + maxTau + 2;
+    // Half-rate copy with a small low-pass filter
+    const half = new Float32Array(samples.length >> 1);
+    for (let i = 0; i < half.length; i++) {
+      const a = samples[2 * i - 1] || 0, b = samples[2 * i], c = samples[2 * i + 1] || 0;
+      half[i] = 0.25 * a + 0.5 * b + 0.25 * c;
+    }
+    const hWin = win >> 1, hMin = Math.max(2, minTau >> 1), hMax = (maxTau >> 1) + 1;
+    const d = new Float32Array(hMax + 2);
+    const starts = [];
+    for (let start = 0; start + frameLen <= samples.length; start += hop) starts.push(start);
+    // Loudness of every frame first, so quiet frames can skip the pitch search
+    const rms = starts.map((start) => {
       let e = 0;
       for (let i = 0; i < win; i++) e += samples[start + i] * samples[start + i];
-      const rms = Math.sqrt(e / win);
-      const r = rms > 1e-4 ? yinFrame(samples, start, win, minTau, maxTau, d, 0.2) : { f: 0, conf: 0 };
-      const f = r.f * sr;
-      frames.push({ t: (start + win / 2) / sr, rms, midi: f > 0 ? freqToMidi(f) : null, conf: r.conf });
+      return Math.sqrt(e / win);
+    });
+    const peak = rms.reduce((m, r) => Math.max(m, r), 0);
+    const quiet = Math.max(1e-4, peak * 0.05);
+    const frames = new Array(starts.length);
+    function run(from, to) {
+      for (let k = from; k < Math.min(to, starts.length); k++) {
+        const start = starts[k];
+        let midi = null, conf = 0;
+        if (rms[k] > quiet) {
+          const h = start >> 1;
+          const r = h + hWin + hMax + 1 <= half.length ? yinFrame(half, h, hWin, hMin, hMax, d, 0.2) : { f: 0, conf: 0 };
+          if (r.f > 0) {
+            // refine at full rate around twice the half-rate period
+            const t0 = 2 / r.f;
+            const lo = Math.max(minTau, Math.floor(t0) - 3), hi = Math.min(maxTau, Math.ceil(t0) + 3);
+            let bt = lo, bv = Infinity;
+            const vals = [];
+            for (let t = lo; t <= hi; t++) { const v = diffAt(samples, start, win, t); vals.push(v); if (v < bv) { bv = v; bt = t; } }
+            let tau = bt;
+            const j = bt - lo;
+            if (j > 0 && j < vals.length - 1) {
+              const den = vals[j - 1] + vals[j + 1] - 2 * vals[j];
+              if (den > 0) tau = bt + (vals[j - 1] - vals[j + 1]) / (2 * den);
+            }
+            midi = freqToMidi(sr / tau);
+            conf = r.conf;
+          }
+        }
+        frames[k] = { t: (start + win / 2) / sr, rms: rms[k], midi, conf };
+      }
     }
-    return frames;
+    return { total: starts.length, run, frames };
   }
+
+  function trackPitch(samples, sr, opts) {
+    const tr = pitchTracker(samples, sr, opts);
+    tr.run(0, tr.total);
+    return tr.frames;
+  }
+
+  // Same as trackPitch, but yields to the page now and then and reports progress (0..1).
+  async function trackPitchAsync(samples, sr, opts, onProgress) {
+    const tr = pitchTracker(samples, sr, opts);
+    const step = 500;
+    for (let k = 0; k < tr.total; k += step) {
+      tr.run(k, k + step);
+      if (onProgress) onProgress(Math.min(1, (k + step) / tr.total));
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    return tr.frames;
+  }
+
 
   // Turn frames into notes.
   // How hard to clean up an imperfect voice. "off" keeps every wobble that lasts.
@@ -198,27 +265,44 @@
       .filter((n) => isFinite(n.pitch));
     notes = tidy(notes, C, minDur);
 
-    // Overall tuning offset (singer slightly sharp/flat as a whole)
-    let tuning = 0;
+    // Tuning offset: how far the singer sits from standard pitch (A = 440 Hz).
+    // Measured locally (about 10 s either side), so a singer who slowly drifts flat
+    // over a long song keeps getting the notes they meant. The offset is unwrapped
+    // over time, so a drift of more than half a semitone does not shift the key.
+    const W = opts.tuneWindow || 10;
+    const local = notes.map(() => 0);
     if (autoTune && notes.length) {
-      // Circular mean of the fractional part, weighted by duration
-      let sx = 0, sy = 0;
-      for (const n of notes) {
-        const ang = 2 * Math.PI * (n.pitch - Math.round(n.pitch));
-        sx += Math.cos(ang) * n.dur;
-        sy += Math.sin(ang) * n.dur;
+      for (let i = 0; i < notes.length; i++) {
+        let sx = 0, sy = 0;
+        for (let j = 0; j < notes.length; j++) {
+          const dt = Math.abs(notes[j].start - notes[i].start);
+          if (dt > W) continue;
+          const w = notes[j].dur * (1 - dt / (W + 1));
+          const ang = 2 * Math.PI * (notes[j].pitch - Math.round(notes[j].pitch));
+          sx += Math.cos(ang) * w;
+          sy += Math.sin(ang) * w;
+        }
+        local[i] = Math.atan2(sy, sx) / (2 * Math.PI);
       }
-      tuning = Math.atan2(sy, sx) / (2 * Math.PI);
+      for (let i = 1; i < local.length; i++) {
+        while (local[i] - local[i - 1] > 0.5) local[i] -= 1;
+        while (local[i] - local[i - 1] < -0.5) local[i] += 1;
+      }
     }
+    let totalDur = 0, sum = 0;
+    notes.forEach((n, i) => { totalDur += n.dur; sum += local[i] * n.dur; });
+    const tuning = totalDur ? sum / totalDur : 0;
+    const driftCents = local.length ? Math.round((Math.max(...local) - Math.min(...local)) * 100) : 0;
 
-    notes = notes.map((n) => {
-      const midi = Math.round(n.pitch - tuning);
+    notes = notes.map((n, i) => {
+      const midi = Math.round(n.pitch - local[i]);
       return {
         start: n.start,
         dur: n.dur,
         midi,
         name: midiToName(midi),
-        cents: Math.round((n.pitch - tuning - midi) * 100),
+        cents: Math.round((n.pitch - local[i] - midi) * 100),
+        tuning: Math.round(local[i] * 100),
       };
     });
 
@@ -230,7 +314,7 @@
         p.dur = n.start + n.dur - p.start;
       } else merged.push({ ...n });
     }
-    return { notes: merged, tuningCents: Math.round(tuning * 100) };
+    return { notes: merged, tuningCents: Math.round(tuning * 100), driftCents };
   }
 
   // Remove slides, scoops and blips that the voice makes between real notes.
@@ -284,10 +368,10 @@
   function analyze(samples, sr, opts) {
     const frames = trackPitch(samples, sr, opts);
     const res = framesToNotes(frames, opts);
-    return { frames, notes: res.notes, tuningCents: res.tuningCents };
+    return { frames, notes: res.notes, tuningCents: res.tuningCents, driftCents: res.driftCents };
   }
 
-  const api = { analyze, trackPitch, framesToNotes, midiToName, midiToFreq, freqToMidi };
+  const api = { analyze, trackPitch, trackPitchAsync, framesToNotes, midiToName, midiToFreq, freqToMidi };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.HumEngine = api;
 })(typeof window !== 'undefined' ? window : globalThis);

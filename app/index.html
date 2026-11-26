@@ -63,6 +63,13 @@ header p { margin: 8px 0 0; color: var(--muted); max-width: 60ch; }
 .meter { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
 .meter i { display: block; height: 100%; width: 0; background: var(--ok); transition: width 60ms linear; }
 .alt { display: flex; gap: 10px; flex-wrap: wrap; }
+.plan { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding-top: 14px; border-top: 1px solid var(--line); }
+.plan-badge { font: 700 0.72rem var(--f-mono); letter-spacing: 0.08em; text-transform: uppercase; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--line); color: var(--muted); }
+.plan-badge.pro { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.plan-text { flex: 1; min-width: 180px; font-size: 0.92rem; }
+.plan-note { flex-basis: 100%; color: var(--muted); font-size: 0.8rem; }
+.progress { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
+.progress i { display: block; height: 100%; width: 0; background: var(--accent); }
 .btn { appearance: none; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: 500 0.95rem var(--f-body); padding: 9px 14px; border-radius: 10px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; }
 .btn:hover { border-color: var(--accent); }
 .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
@@ -73,8 +80,9 @@ label.btn input { position: absolute; opacity: 0; width: 1px; height: 1px; }
 .tag { font: 500 0.8rem var(--f-mono); color: var(--muted); }
 .tag.sample { color: var(--warn); }
 .roll-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
-canvas#roll { display: block; width: 100%; height: 260px; }
-.notes { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; margin: 0; padding: 0; }
+#rollSpacer { height: 260px; }
+canvas#roll { display: block; position: sticky; left: 0; width: 100%; height: 260px; }
+.notes { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; margin: 0; padding: 0; max-height: 236px; overflow-y: auto; }
 .note { border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px 5px; display: flex; flex-direction: column; align-items: center; min-width: 52px; cursor: pointer; background: var(--surface); color: var(--ink); font: inherit; }
 .note b { font: 700 1.05rem var(--f-mono); }
 .note small { font: 500 0.7rem var(--f-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -98,7 +106,7 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
 .seg button:first-child { border-left: none; }
 .seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
 .view { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-.sheet-wrap { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow-x: auto; padding: 4px 0; }
+.sheet-wrap { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow: auto; max-height: 70vh; padding: 4px 0; }
 #sheet { min-height: 140px; }
 #sheet svg { display: block; }
 [hidden] { display: none !important; }
@@ -127,7 +135,7 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
       <a href="photo.html">Photo to Sheet Music</a>
     </nav>
     <h1>Hum to Piano</h1>
-    <p>Hum a tune for up to 10 seconds. The app finds each note you hummed, shows it on a piano roll, and plays it back on piano.</p>
+    <p id="intro">Hum or sing a tune. The app finds each note, shows it on a piano roll and as sheet music, and plays it back on piano.</p>
   </header>
 
   <section class="panel" aria-label="Record">
@@ -138,13 +146,20 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
       </button>
       <div class="rec-info">
         <strong id="recTitle">Tap to hum</strong>
-        <div class="status" id="status">Hum on "mmm" or "doo", one clear note at a time. Recording stops by itself after 10 seconds.</div>
+        <div class="status" id="status">Hum on "mmm" or "doo", or sing the words, one clear note at a time.</div>
         <div class="meter" aria-hidden="true"><i id="meter"></i></div>
       </div>
     </div>
     <div class="alt">
       <label class="btn" for="fileIn">Upload a recording<input type="file" id="fileIn" accept="audio/*"></label>
       <button class="btn" id="sampleBtn">Load the example</button>
+    </div>
+    <div class="progress" id="progress" hidden><i id="progressBar"></i></div>
+    <div class="plan">
+      <span class="plan-badge" id="planBadge">Free</span>
+      <span class="plan-text" id="planText">Records up to 10 seconds.</span>
+      <button class="btn" id="planBtn" type="button">Try Pro: whole songs up to 5 min</button>
+      <span class="plan-note" id="planNote">Pro preview for testing. Buying Pro will come with the app store version.</span>
     </div>
   </section>
 
@@ -168,7 +183,7 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
       <button class="tab" role="tab" id="tabSheet" aria-controls="viewSheet" aria-selected="false">Sheet music</button>
     </div>
     <div class="view" id="viewRoll" role="tabpanel" aria-labelledby="tabRoll">
-      <div class="roll-wrap"><canvas id="roll" aria-label="Piano roll of detected notes"></canvas></div>
+      <div class="roll-wrap" id="rollWrap"><div id="rollSpacer"><canvas id="roll" aria-label="Piano roll of detected notes"></canvas></div></div>
       <div class="legend"><span>Detected note</span><span class="trk">Your actual pitch</span></div>
     </div>
     <div class="view" id="viewSheet" role="tabpanel" aria-labelledby="tabSheet" hidden>
@@ -206,7 +221,7 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
       <li>Use a quiet room and hold the phone about 30 cm from your mouth.</li>
       <li>Hum each note steadily. A tiny break or a "d" between repeated notes helps the app count them.</li>
       <li>The number under each note is how far you were from the exact pitch, in cents (100 cents is one semitone). Tap a note to hear it.</li>
-      <li>"Allow for overall sharp or flat" helps when the whole tune drifted a little away from A = 440 Hz, as unaccompanied singing often does.</li>
+      <li>"Allow for overall sharp or flat" helps when you sing a little away from A = 440 Hz, as unaccompanied singing often does. On long songs it also follows you if you slowly drift flat or sharp.</li>
     </ul>
   </details>
 </main>
@@ -229,7 +244,22 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
   'use strict';
   const E = window.HumEngine;
   const SR = 16000;
-  const MAX_SEC = 10;
+  // Plans: Free records 10 seconds, Pro records whole songs up to 5 minutes.
+  const PLANS = {
+    free: { name: 'Free', maxSec: 10, text: 'Records up to 10 seconds.' },
+    pro: { name: 'Pro', maxSec: 300, text: 'Records whole songs up to 5 minutes.' },
+  };
+  let plan = 'free';
+  try { if (localStorage.getItem('plan') === 'pro') plan = 'pro'; } catch (e) {}
+  const maxSec = () => PLANS[plan].maxSec;
+  const fmtTime = (sec) => { sec = Math.max(0, Math.round(sec)); return sec < 60 ? sec + ' s' : Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0'); };
+  function showPlan() {
+    const p = PLANS[plan];
+    $('planBadge').textContent = p.name;
+    $('planBadge').classList.toggle('pro', plan === 'pro');
+    $('planText').textContent = p.text;
+    $('planBtn').textContent = plan === 'pro' ? 'Switch back to Free' : 'Try Pro: whole songs up to 5 min';
+  }
   const $ = (id) => document.getElementById(id);
   const statusEl = $('status');
 
@@ -240,28 +270,51 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
     return ctx;
   }
 
-  const state = { cleanup: 'medium', samples: null, frames: [], notes: [], tuning: 0, source: '', playing: [], playhead: null, active: -1 };
+  showPlan();
+  $('planBtn').addEventListener('click', () => {
+    if (rec) return;
+    plan = plan === 'pro' ? 'free' : 'pro';
+    try { localStorage.setItem('plan', plan); } catch (e) {}
+    showPlan();
+  });
+
+  const state = { busy: false, cleanup: 'medium', samples: null, frames: [], notes: [], tuning: 0, source: '', playing: [], playhead: null, active: -1 };
 
   function setStatus(msg, err) { statusEl.textContent = msg; statusEl.classList.toggle('err', !!err); }
 
   // ---------- Analysis ----------
-  function run(samples, source) {
+  async function run(samples, source) {
     state.samples = samples;
     state.source = source;
-    state.frames = E.trackPitch(samples, SR);
+    const long = samples.length > SR * 20;
+    state.busy = true;
+    ['recBtn', 'sampleBtn', 'playBtn', 'playOrigBtn'].forEach((id) => ($(id).disabled = true));
+    if (long) { $('progress').hidden = false; $('progressBar').style.width = '0'; }
+    try {
+      state.frames = await E.trackPitchAsync(samples, SR, {}, (f) => {
+        if (long) { $('progressBar').style.width = Math.round(f * 100) + '%'; setStatus(`Finding notes… ${Math.round(f * 100)}%`); }
+      });
+    } finally {
+      state.busy = false;
+      $('progress').hidden = true;
+      ['recBtn', 'sampleBtn'].forEach((id) => ($(id).disabled = false));
+    }
+    if ($('rollWrap')) $('rollWrap').scrollLeft = 0;
     reanalyze();
   }
   function reanalyze() {
     const res = E.framesToNotes(state.frames, { autoTune: $('tuneChk').checked, cleanup: state.cleanup });
     state.notes = res.notes;
     state.tuning = res.tuningCents;
+    state.drift = res.driftCents;
     $('srcTag').textContent = state.source;
     $('srcTag').classList.toggle('sample', state.source.startsWith('Example'));
     const t = state.tuning;
     $('tuneInfo').textContent = !state.notes.length ? '' : !$('tuneChk').checked
       ? 'Notes are matched to standard pitch (A = 440 Hz).'
-      : Math.abs(t) < 5 ? 'Your overall pitch was right on standard tuning.'
-      : `Overall you were ${Math.abs(t)} cents ${t > 0 ? 'sharp' : 'flat'}, so notes are matched relative to that.`;
+      : (Math.abs(t) < 5 ? 'Your overall pitch was right on standard tuning.'
+      : `Overall you were ${Math.abs(t)} cents ${t > 0 ? 'sharp' : 'flat'}, so notes are matched relative to that.`)
+        + (state.drift >= 25 ? ` Your pitch drifted by ${state.drift} cents during the recording, and the notes follow that drift.` : '');
     renderNotes();
     drawRoll();
     renderSheet();
@@ -293,13 +346,28 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
     $('playBtn').disabled = $('stopBtn').disabled = !state.notes.length;
     $('playOrigBtn').disabled = !state.samples;
   }
-  function highlight(i) {
+  function scrollInto(wrap, el) {
+    if (!wrap || !el) return;
+    const w = wrap.getBoundingClientRect(), r = el.getBoundingClientRect();
+    if (r.top < w.top || r.bottom > w.bottom) wrap.scrollTop += r.top - w.top - w.height / 3;
+    if (r.left < w.left || r.right > w.right) wrap.scrollLeft += r.left - w.left - w.width / 3;
+  }
+  function highlight(i, force) {
+    if (i === state.active && !force) return;
     state.active = i;
-    document.querySelectorAll('#notes .note').forEach((el, k) => el.classList.toggle('on', k === i));
+    let chip = null, staffEl = null;
+    document.querySelectorAll('#notes .note').forEach((el, k) => { el.classList.toggle('on', k === i); if (k === i) chip = el; });
     (state.sheetNotes || []).forEach((sn) => {
       const el = sn.getSVGElement && sn.getSVGElement();
-      if (el) el.classList.toggle('on', i >= 0 && sn._ev.idx === i);
+      const on = i >= 0 && sn._ev.idx === i;
+      if (el) el.classList.toggle('on', on);
+      if (on && !staffEl) staffEl = el;
     });
+    // keep the playing note in view on long songs
+    if (state.playhead !== null && i >= 0) {
+      scrollInto($('notes'), chip);
+      if (!$('viewSheet').hidden) scrollInto(document.querySelector('.sheet-wrap'), staffEl);
+    }
   }
 
   // ---------- Sheet music ----------
@@ -379,7 +447,7 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
       el.addEventListener('click', () => { stopAll(); piano(audio(), sn._ev.midi, audio().currentTime + 0.02, 0.8); });
     });
     state.sheetNotes = all;
-    if (state.active >= 0) highlight(state.active);
+    if (state.active >= 0) highlight(state.active, true);
   }
 
   function showTab(which) {
@@ -394,10 +462,21 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
 
   // ---------- Piano roll ----------
   function cssVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+  let rollQueued = false;
+  function queueRoll() { if (!rollQueued) { rollQueued = true; requestAnimationFrame(() => { rollQueued = false; drawRoll(); }); } }
+  // Tuning offset (semitones) in force at time t: follows a singer's drift on long songs
+  function tuningAt(t) {
+    const ns = state.notes;
+    if (!ns.length || !$('tuneChk').checked) return 0;
+    let lo = 0, hi = ns.length - 1;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (ns[mid].start + ns[mid].dur < t) lo = mid + 1; else hi = mid; }
+    return (ns[lo].tuning || 0) / 100;
+  }
   function drawRoll() {
     const cv = $('roll');
+    const wrap = $('rollWrap');
     const dpr = window.devicePixelRatio || 1;
-    const W = cv.clientWidth, H = cv.clientHeight;
+    const W = wrap.clientWidth, H = cv.clientHeight;
     cv.width = W * dpr; cv.height = H * dpr;
     const g = cv.getContext('2d');
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -405,7 +484,6 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
     const col = { line: cssVar('--line'), black: cssVar('--key-black'), muted: cssVar('--muted'), accent: cssVar('--accent'), track: cssVar('--track'), ink: cssVar('--ink'), surface: cssVar('--surface'), accentInk: cssVar('--accent-ink') };
     g.fillStyle = col.surface; g.fillRect(0, 0, W, H);
 
-    const tShift = $('tuneChk').checked ? state.tuning / 100 : 0;
     const pts = state.frames.filter((f) => f.midi !== null && f.conf > 0.6);
     let lo, hi;
     if (state.notes.length) {
@@ -413,10 +491,17 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
       hi = Math.max(...state.notes.map((n) => n.midi)) + 2;
     } else { lo = 55; hi = 72; }
     if (hi - lo < 12) { const c = (hi + lo) / 2; lo = Math.floor(c - 6); hi = Math.ceil(c + 6); }
-    const dur = state.samples ? state.samples.length / SR : MAX_SEC;
+    const dur = state.samples ? state.samples.length / SR : 10;
     const left = 44, right = 8;
     const rowH = H / (hi - lo + 1);
-    const x = (t) => left + (t / dur) * (W - left - right);
+    // Short recordings fit the width; long ones scroll sideways at 60 px per second
+    const pps = dur <= 12 ? (W - left - right) / dur : 60;
+    const fullW = Math.ceil(left + right + dur * pps);
+    $('rollSpacer').style.width = fullW + 'px';
+    cv.style.width = W + 'px';
+    const off = Math.min(wrap.scrollLeft, Math.max(0, fullW - W));
+    const x = (t) => left + t * pps - off;
+    const t0v = Math.max(0, (off - 20) / pps), t1v = (off + W + 20) / pps;
     const y = (m) => H - (m - lo + 0.5) * rowH;
 
     g.font = `500 10px ${cssVar('--f-mono') || 'monospace'}`;
@@ -430,12 +515,17 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
       }
       if (m % 12 === 0) { g.strokeStyle = col.line; g.beginPath(); g.moveTo(left, y(m) + rowH / 2); g.lineTo(W, y(m) + rowH / 2); g.stroke(); }
     }
-    // seconds grid
+    // time grid (every second; labelled every 5 s on long recordings)
     g.strokeStyle = col.line; g.fillStyle = col.muted; g.textBaseline = 'bottom';
-    for (let s = 1; s < dur; s++) { g.beginPath(); g.moveTo(x(s), 0); g.lineTo(x(s), H); g.stroke(); g.fillText(s + 's', x(s) + 3, H - 2); }
+    for (let s = Math.max(1, Math.floor(t0v)); s < Math.min(dur, t1v); s++) {
+      if (x(s) < left) continue;
+      g.beginPath(); g.moveTo(x(s), 0); g.lineTo(x(s), H); g.stroke();
+      if (dur <= 12 || s % 5 === 0) g.fillText(dur <= 60 ? s + 's' : Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'), x(s) + 3, H - 2);
+    }
 
     // notes (bars), then the raw pitch track as a thin line on top
     state.notes.forEach((n, i) => {
+      if (n.start + n.dur < t0v || n.start > t1v) return;
       g.fillStyle = col.accent;
       g.globalAlpha = state.active === -1 || state.active === i ? 1 : 0.55;
       const bx = x(n.start), bw = Math.max(3, x(n.start + n.dur) - bx);
@@ -448,12 +538,22 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
     g.strokeStyle = col.ink; g.globalAlpha = 0.45; g.lineWidth = 1.25; g.beginPath();
     let prev = null;
     for (const f of pts) {
-      const m = f.midi - tShift;
+      if (f.t < t0v || f.t > t1v) continue;
+      const m = f.midi - tuningAt(f.t);
       if (m < lo - 0.5 || m > hi + 0.5) { prev = null; continue; }
       if (prev && f.t - prev < 0.025) g.lineTo(x(f.t), y(m)); else g.moveTo(x(f.t), y(m));
       prev = f.t;
     }
     g.stroke(); g.globalAlpha = 1; g.lineWidth = 1;
+    // note-name column stays put while the timeline scrolls
+    if (off > 0) {
+      g.fillStyle = col.surface; g.fillRect(0, 0, left, H);
+      g.textBaseline = 'middle';
+      for (let m = lo; m <= hi; m++) {
+        const isBlack = [1, 3, 6, 8, 10].includes(((m % 12) + 12) % 12);
+        if (m % 12 === 0 || m === lo || m === hi || (rowH >= 13 && !isBlack)) { g.fillStyle = m % 12 === 0 ? col.ink : col.muted; g.fillText(E.midiToName(m), 6, y(m)); }
+      }
+    }
     if (state.playhead !== null) { g.strokeStyle = col.ink; g.lineWidth = 1.5; g.beginPath(); g.moveTo(x(state.playhead), 0); g.lineTo(x(state.playhead), H); g.stroke(); g.lineWidth = 1; }
   }
 
@@ -478,6 +578,12 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
       if (t > total) { state.playhead = null; highlight(-1); drawRoll(); return; }
       state.playhead = t;
       if (noteMode) highlight(state.notes.findIndex((n) => t >= n.start && t < n.start + n.dur));
+      const wrap = $('rollWrap');
+      const dur = state.samples ? state.samples.length / SR : 10;
+      if (!$('viewRoll').hidden && dur > 12) {
+        const px = 44 + t * 60;
+        if (px < wrap.scrollLeft + 44 || px > wrap.scrollLeft + wrap.clientWidth - 40) wrap.scrollLeft = px - 80;
+      }
       drawRoll();
       raf = requestAnimationFrame(step);
     };
@@ -566,8 +672,9 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
   $('tabSheet').addEventListener('click', () => showTab('sheet'));
 
   // ---------- Audio input ----------
+  // Mono, 16 kHz, normalised, and no longer than the plan allows
   async function toMono16k(audioBuffer) {
-    const len = Math.ceil(audioBuffer.duration * SR);
+    const len = Math.ceil(Math.min(audioBuffer.duration, maxSec()) * SR);
     const off = new OfflineAudioContext(1, Math.max(1, len), SR);
     const src = off.createBufferSource();
     src.buffer = audioBuffer;
@@ -575,7 +682,6 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
     src.start();
     const r = await off.startRendering();
     let s = r.getChannelData(0);
-    if (s.length > SR * (MAX_SEC + 5)) s = s.slice(0, SR * (MAX_SEC + 5));
     // Normalize
     let pk = 0; for (let i = 0; i < s.length; i++) pk = Math.max(pk, Math.abs(s[i]));
     const out = new Float32Array(s.length);
@@ -593,9 +699,14 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
       const ab = await file.arrayBuffer();
       const decoded = await audio().decodeAudioData(ab);
       const s = await toMono16k(decoded);
-      run(s, file.name);
-      setStatus(state.notes.length ? `Found ${state.notes.length} notes in ${file.name}.` : 'No clear notes found in that file.');
+      const cut = decoded.duration > maxSec() + 0.5;
+      await run(s, file.name + (cut ? ` (first ${fmtTime(maxSec())})` : ''));
+      const limit = !cut ? '' : plan === 'free'
+        ? ` The Free plan uses the first ${fmtTime(maxSec())}. Pro takes whole songs up to 5 minutes.`
+        : ` Pro uses the first 5 minutes of a recording.`;
+      setStatus((state.notes.length ? `Found ${state.notes.length} notes in ${file.name}.` : 'No clear notes found in that file.') + limit);
     } catch (err) {
+      console.error(err);
       setStatus("That file couldn't be read as audio. Try an .m4a, .mp3 or .wav voice memo.", true);
     }
     e.target.value = '';
@@ -629,14 +740,15 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
     $('recBtn').setAttribute('aria-label', 'Stop recording');
     $('recLabel').textContent = 'Stop';
     $('recTitle').textContent = 'Listening…';
-    setStatus('Hum now. Tap Stop when you are done.');
+    const limit = maxSec();
+    setStatus(plan === 'pro' ? 'Sing or hum your song. Tap Stop when you are done.' : 'Hum now. Tap Stop when you are done.');
     const ring = $('ring');
     const tick = () => {
       if (!rec) return;
       const el = (performance.now() - t0) / 1000;
-      ring.style.strokeDashoffset = String(320.4 * (1 - Math.min(1, el / MAX_SEC)));
-      $('recTitle').textContent = `Listening… ${Math.max(0, MAX_SEC - el).toFixed(0)}s left`;
-      if (el >= MAX_SEC) { stopRec(); return; }
+      ring.style.strokeDashoffset = String(320.4 * (1 - Math.min(1, el / limit)));
+      $('recTitle').textContent = `Listening… ${fmtTime(limit - el)} left`;
+      if (el >= limit) { rec.hitLimit = true; stopRec(); return; }
       rec.timer = requestAnimationFrame(tick);
     };
     rec.timer = requestAnimationFrame(tick);
@@ -659,10 +771,11 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
     const ch = buf.getChannelData(0);
     let o = 0; for (const c of r.chunks) { ch.set(c, o); o += c.length; }
     const s = await toMono16k(buf);
-    run(s, 'Your recording, ' + (total / r.rate).toFixed(1) + ' s');
-    setStatus(state.notes.length ? `Found ${state.notes.length} notes. Press “Play on piano” to hear them.` : 'No clear notes found. Try humming louder or closer to the microphone.', !state.notes.length);
+    await run(s, 'Your recording, ' + fmtTime(total / r.rate));
+    const upsell = r.hitLimit && plan === 'free' ? ' Free records 10 seconds. Try Pro to record whole songs up to 5 minutes.' : '';
+    setStatus((state.notes.length ? `Found ${state.notes.length} notes. Press “Play on piano” to hear them.` : 'No clear notes found. Try humming louder or closer to the microphone.') + upsell, !state.notes.length);
   }
-  $('recBtn').addEventListener('click', () => (rec ? stopRec() : startRec()));
+  $('recBtn').addEventListener('click', () => { if (state.busy) return; rec ? stopRec() : startRec(); });
 
   // ---------- Example hum (so the page opens showing how it works) ----------
   function exampleHum() {
@@ -696,13 +809,14 @@ details ul { padding-left: 1.2em; margin: 8px 0 0; }
     });
     return Float32Array.from(outA);
   }
-  $('sampleBtn').addEventListener('click', () => { stopAll(); run(exampleHum(), 'Example: Twinkle, Twinkle (computer-made messy hum)'); setStatus('Loaded the example. Record your own hum any time.'); });
+  $('sampleBtn').addEventListener('click', async () => { stopAll(); await run(exampleHum(), 'Example: Twinkle, Twinkle (computer-made messy hum)'); setStatus('Loaded the example. Record your own hum any time.'); });
 
   run(exampleHum(), 'Example: Twinkle, Twinkle (computer-made messy hum)');
   let saved = 'roll';
   try { saved = localStorage.getItem('view') || 'roll'; } catch (e) {}
   if (saved === 'sheet') showTab('sheet');
   let rsz = 0, lastW = window.innerWidth;
+  $('rollWrap').addEventListener('scroll', queueRoll, { passive: true });
   window.addEventListener('resize', () => {
     drawRoll();
     if (window.innerWidth === lastW) return;

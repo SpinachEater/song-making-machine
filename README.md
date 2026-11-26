@@ -45,8 +45,16 @@ Known limits of homr: it reads pitch and rhythm on treble and bass clef, not dyn
 node test/engine.test.js     # synthetic hum tests
 node test/notation.test.js   # rhythm, key and bar tests
 node test/messy.test.js      # messy human-like humming at each clean-up level
+node test/long.test.js       # 2- and 5-minute songs that drift flat (Pro plan): accuracy and speed
 node test/musicxml.test.js tmp-mxl && python3 test/check_mxl.py tmp-mxl   # .mxl export, checked with music21
 node test/score.test.js     # MusicXML reading, checked against music21 (needs Playwright)
 python3 test/omr_server.test.py   # reader server request checks and page merging
 node build.js              # rebuild the pages
 ```
+
+## Plans
+
+- **Free**: records or uploads up to 10 seconds.
+- **Pro**: whole songs up to 5 minutes. Long songs are analysed in the background with a progress bar, the piano roll scrolls, the sheet music follows playback, and tuning follows a singer who drifts flat or sharp over the song.
+
+For now the page has a "Try Pro" switch for testing. Real purchases will come with the app store version.
