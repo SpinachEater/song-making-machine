@@ -122,7 +122,7 @@ dialog p { color: var(--muted); margin: 0 0 12px; }
       <a href="photo.html" aria-current="page">Photo to Sheet Music</a>
     </nav>
     <h1>Photo to Sheet Music</h1>
-    <p>Take a photo of each page of a score. The app reads the notes, shows them as clean sheet music you can export, and plays them back on piano.</p>
+    <p>Take a photo of each page of a score, or open a PDF of it. The app reads the notes, shows them as clean sheet music you can export, and plays them back on piano.</p>
   </header>
 
   <section class="panel" aria-labelledby="pagesTitle">
@@ -131,10 +131,10 @@ dialog p { color: var(--muted); margin: 0 0 12px; }
       <label class="btn primary" for="cameraIn">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
         Take a photo<input type="file" id="cameraIn" accept="image/*" capture="environment"></label>
-      <label class="btn" for="photosIn">Choose photos<input type="file" id="photosIn" accept="image/*" multiple></label>
+      <label class="btn" for="photosIn">Choose photos or a PDF<input type="file" id="photosIn" accept="image/*,application/pdf,.pdf" multiple></label>
       <button class="btn" id="exampleBtn" type="button">Try the example</button>
     </div>
-    <div class="empty" id="pagesEmpty">No pages yet. Photograph each page straight on, in good light, with the whole page in the frame.</div>
+    <div class="empty" id="pagesEmpty">No pages yet. Photograph each page straight on, in good light, with the whole page in the frame, or choose a PDF of the score.</div>
     <div class="desk" id="desk" hidden></div>
     <div class="row" id="pagesBar" hidden>
       <label class="toggle"><input type="checkbox" id="scanLook" checked> Scan look (cleaner black and white view)</label>
@@ -148,7 +148,7 @@ dialog p { color: var(--muted); margin: 0 0 12px; }
       <label class="btn" for="xmlIn">Open a MusicXML file<input type="file" id="xmlIn" accept=".mxl,.musicxml,.xml,application/vnd.recordare.musicxml,application/vnd.recordare.musicxml+xml"></label>
     </div>
     <div class="progress" id="progress" hidden><i id="progressBar"></i></div>
-    <div class="status" id="readStatus">Add a photo first. Reading takes about 15 seconds a page.</div>
+    <div class="status" id="readStatus">Add a photo or a PDF first. Reading takes about 15 seconds a page.</div>
     <details id="serverBox">
       <summary>Sheet music reader</summary>
       <p>Reading the notes from a photo happens on a small server running the free <a href="https://github.com/liebharc/homr">homr</a> reader. Enter its address here.</p>
@@ -196,7 +196,7 @@ dialog p { color: var(--muted); margin: 0 0 12px; }
       <li>Hold the phone straight above the page, so the staff lines look parallel.</li>
       <li>Use daylight or a bright lamp, and avoid your own shadow across the page.</li>
       <li>Take one photo per page and add them in order. You can move pages up or down.</li>
-      <li>Printed music reads best. Handwritten music is not supported yet.</li>
+      <li>Printed music reads best, and a PDF of a printed score reads best of all. Handwritten music is not supported yet.</li>
       <li>The reader picks up notes and rhythms on treble and bass clef. Dynamics, articulations and lyrics are not read yet.</li>
     </ul>
   </details>
@@ -229,6 +229,8 @@ dialog p { color: var(--muted); margin: 0 0 12px; }
   const $ = (id) => document.getElementById(id);
   const EXAMPLE_PHOTO = '/*EXAMPLE_PHOTO*/';
   const SECONDS_PER_PAGE = 15;
+  const MAX_TOTAL_PAGES = 40; // per score
+  const BATCH = 10; // pages per request (the reader's limit)
   const store = {
     get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
     set(k, v) { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) {} },
@@ -276,8 +278,54 @@ dialog p { color: var(--muted); margin: 0 0 12px; }
     const w = Math.round(bmp.width * s), h = Math.round(bmp.height * s);
     const c = document.createElement('canvas'); c.width = w; c.height = h;
     const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, w, h); g.drawImage(bmp, 0, 0, w, h);
+    return fromCanvas(c);
+  }
+  function fromCanvas(c) {
     const original = c.toDataURL('image/jpeg', 0.9);
-    return { original, scan: scanLook(g, w, h) };
+    return { original, scan: scanLook(c.getContext('2d'), c.width, c.height) };
+  }
+
+  // ---------- PDFs: each page is drawn as an image, like a very good photo ----------
+  const PDFJS = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/';
+  let pdfjsReady = null;
+  function loadPdfjs() {
+    if (!pdfjsReady) {
+      pdfjsReady = new Promise((resolve, reject) => {
+        const sc = document.createElement('script');
+        sc.src = PDFJS + 'pdf.min.js';
+        sc.onload = () => { window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.js'; resolve(window.pdfjsLib); };
+        sc.onerror = () => { pdfjsReady = null; reject(new Error('The PDF reader did not load. Check your connection and try again.')); };
+        document.head.appendChild(sc);
+      });
+    }
+    return pdfjsReady;
+  }
+  async function pdfPages(file, onPage) {
+    const lib = await loadPdfjs();
+    let doc;
+    try { doc = await lib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise; }
+    catch (e) {
+      throw new Error(e && e.name === 'PasswordException'
+        ? `${file.name} is locked with a password. Open it, save an unlocked copy, and try that.`
+        : `${file.name} could not be opened as a PDF.`);
+    }
+    const count = Math.min(doc.numPages, MAX_TOTAL_PAGES);
+    for (let i = 1; i <= count; i++) {
+      const page = await doc.getPage(i);
+      const base = page.getViewport({ scale: 1 });
+      // About 300 dots per inch on a letter page, but never more than 2400 pixels on the long side
+      const scale = Math.min(2400 / Math.max(base.width, base.height), 300 / 72);
+      const vp = page.getViewport({ scale });
+      const c = document.createElement('canvas');
+      c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+      const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+      await page.render({ canvasContext: g, viewport: vp }).promise;
+      page.cleanup();
+      onPage({ name: `${file.name}, page ${i}`, ...fromCanvas(c) }, i, count);
+    }
+    const skipped = doc.numPages - count;
+    doc.destroy();
+    return skipped;
   }
   // A cleaner view, like a scanner: each spot is compared with the paper around it,
   // so shadows and uneven light turn white and the printed notes turn black.
@@ -324,20 +372,38 @@ dialog p { color: var(--muted); margin: 0 0 12px; }
     return g.canvas.toDataURL('image/jpeg', 0.85);
   }
 
+  const isPdf = (f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
   async function addFiles(files) {
-    const list = [...files].filter((f) => f.type.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif)$/i.test(f.name));
-    if (!list.length) { setRead('Those files are not photos. Use JPEG, PNG or a phone camera photo.', 'err'); return; }
-    setRead('Adding ' + list.length + (list.length === 1 ? ' page…' : ' pages…'));
+    const list = [...files].filter((f) => isPdf(f) || f.type.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif)$/i.test(f.name));
+    if (!list.length) { setRead('Those files are not photos or PDFs. Use JPEG, PNG, a phone camera photo or a PDF.', 'err'); return; }
+    let problem = null;
     for (const f of list) {
-      try { state.pages.push({ id: nextId++, name: f.name, ...(await prepare(f)) }); }
-      catch (e) { setRead('One photo could not be opened (' + f.name + '). If it is a HEIC photo, try a JPEG.', 'err'); }
+      if (state.pages.length >= MAX_TOTAL_PAGES) { problem = `Only the first ${MAX_TOTAL_PAGES} pages were added. Read the score in parts if it is longer.`; break; }
+      try {
+        if (isPdf(f)) {
+          setRead(`Opening ${f.name}…`);
+          const room = MAX_TOTAL_PAGES - state.pages.length;
+          const skipped = await pdfPages(f, (pg, i, count) => {
+            if (i > room) return;
+            state.pages.push({ id: nextId++, ...pg });
+            setRead(`Opening ${f.name}… page ${i} of ${count}`);
+            renderPages();
+          });
+          if (skipped > 0 || state.pages.length >= MAX_TOTAL_PAGES) problem = `Only the first ${MAX_TOTAL_PAGES} pages were added. Read the score in parts if it is longer.`;
+        } else {
+          setRead(`Adding ${f.name}…`);
+          state.pages.push({ id: nextId++, name: f.name, ...(await prepare(f)) });
+        }
+      } catch (e) {
+        problem = isPdf(f) ? e.message : `One photo could not be opened (${f.name}). If it is a HEIC photo, try a JPEG.`;
+      }
     }
     renderPages();
-    setRead(readyText());
+    if (problem) setRead(problem, 'err'); else setRead(readyText());
   }
   function readyText() {
     const n = state.pages.length;
-    if (!n) return 'Add a photo first. Reading takes about 15 seconds a page.';
+    if (!n) return 'Add a photo or a PDF first. Reading takes about 15 seconds a page.';
     return `${n} ${n === 1 ? 'page' : 'pages'} ready. Reading takes about ${n * SECONDS_PER_PAGE} seconds.`;
   }
 
@@ -423,18 +489,28 @@ dialog p { color: var(--muted); margin: 0 0 12px; }
       setRead(`Reading ${n === 1 ? 'the page' : n + ' pages'}… ${Math.round(sec)} s` + (sec > expect * 1.5 ? ' (taking longer than usual)' : ''));
     }, 500);
     try {
-      const r = await fetch(serverUrl() + '/recognize', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pages: state.pages.map((p) => p.original) }),
-        signal: AbortSignal.timeout(n * 300000),
-      });
-      let j = null;
-      try { j = await r.json(); } catch (e) {}
-      if (!j && [502, 503, 504].includes(r.status)) throw new Error('The reader is waking up (it sleeps when nobody has used it for a while). Try again in a minute or two.');
-      if (!r.ok || !j || !j.musicxml) throw new Error((j && j.error) || 'The reader could not read these pages.');
+      // Long scores go to the reader 10 pages at a time, then the parts are joined
+      const parts = [];
+      for (let from = 0; from < n; from += BATCH) {
+        const batch = state.pages.slice(from, from + BATCH);
+        const r = await fetch(serverUrl() + '/recognize', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pages: batch.map((p) => p.original) }),
+          signal: AbortSignal.timeout(batch.length * 300000),
+        });
+        let j = null;
+        try { j = await r.json(); } catch (e) {}
+        if (!j && [502, 503, 504].includes(r.status)) throw new Error('The reader is waking up (it sleeps when nobody has used it for a while). Try again in a minute or two.');
+        if (!r.ok || !j || !j.musicxml) {
+          // The reader counts pages within this batch; count them within the whole score
+          const msg = ((j && j.error) || 'The reader could not read these pages.').replace(/page (\d+)/, (m, k) => 'page ' + (from + Number(k)));
+          throw new Error(msg);
+        }
+        parts.push(j.musicxml);
+      }
       $('progressBar').style.width = '100%';
-      await showMusic(j.musicxml, 'photo');
-      setRead(`Read ${n === 1 ? '1 page' : n + ' pages'} in ${Math.round(j.seconds || (performance.now() - t0) / 1000)} seconds. Check the result below against your photos.`, 'ok');
+      await showMusic(parts.length === 1 ? parts[0] : window.Score.merge(parts), 'photo');
+      setRead(`Read ${n === 1 ? '1 page' : n + ' pages'} in ${Math.round((performance.now() - t0) / 1000)} seconds. Check the result below against your pages.`, 'ok');
     } catch (e) {
       const unreachable = e instanceof TypeError || (e && e.name === 'TimeoutError' && (performance.now() - t0) < 6000);
       if (unreachable) {

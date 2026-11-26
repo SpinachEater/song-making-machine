@@ -5,6 +5,7 @@
 //     notes: [{ midi, start, dur, beat, beats, part, staff, voice, measure }]
 //     start/dur are in seconds, beat/beats in quarter notes.
 //   await Score.readFile(bytes) -> MusicXML text (unzips .mxl when needed)
+//   Score.merge([xml, xml, ...]) -> one MusicXML score from consecutive pages
 (function (root) {
   'use strict';
 
@@ -226,7 +227,30 @@
     return xml;
   }
 
-  const api = { parse, readFile, unzip };
+  // Joins several MusicXML scores read from consecutive pages into one score:
+  // the bars of each part are added after the bars of the same part in the first score.
+  function merge(xmls) {
+    const P = getParser();
+    const docs = xmls.map((x) => P.parseFromString(x, 'application/xml'));
+    const first = docs[0];
+    const parts = kids(first.documentElement, 'part');
+    const counts = parts.map((p) => kids(p, 'measure').length);
+    docs.slice(1).forEach((d) => {
+      kids(d.documentElement, 'part').forEach((part, i) => {
+        if (i >= parts.length) return; // an extra staff on a later page: keep the first page's parts
+        kids(part, 'measure').forEach((m) => {
+          const copy = first.importNode(m, true);
+          copy.setAttribute('number', String(++counts[i]));
+          parts[i].appendChild(copy);
+        });
+      });
+    });
+    let out = new XMLSerializer().serializeToString(first);
+    if (!out.startsWith('<?xml')) out = '<?xml version="1.0" encoding="UTF-8"?>\n' + out;
+    return out;
+  }
+
+  const api = { parse, readFile, unzip, merge };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Score = api;
 })(typeof window !== 'undefined' ? window : globalThis);

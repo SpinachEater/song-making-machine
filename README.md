@@ -3,7 +3,7 @@
 Make songs with your voice. Two modules so far:
 
 - **Hum to Piano** (`docs/index.html`): hum a tune for up to 10 seconds, see each note you hummed, and hear it played back on piano.
-- **Photo to Sheet Music** (`docs/photo.html`): photograph the pages of a score, see them as sheet music pages, read the notes into MusicXML (export as `.mxl`), and play them back on piano. Playback is a full-version feature; until store purchases exist, a free "preview" switch unlocks it.
+- **Photo to Sheet Music** (`docs/photo.html`): photograph the pages of a score (or open a PDF of it; each PDF page is drawn as an image in the browser with PDF.js and read the same way), see them as sheet music pages, read the notes into MusicXML (export as `.mxl`), and play them back on piano. Playback is a full-version feature; until store purchases exist, a free "preview" switch unlocks it.
 
 ## Try it
 

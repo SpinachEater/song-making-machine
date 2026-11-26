@@ -48,6 +48,15 @@ function check(name, ok, detail) {
   check('.mxl: Twinkle opens from the zip', names === '60,60,67,67,69,69,67,65,65,64,64,62,62,60', names);
   check('.mxl: title kept', /Twinkle/.test(tw.title), tw.title);
 
+  // 4. Joining pages: three copies of the homr result become one score three times as long
+  const merged = await page.evaluate((x) => {
+    const one = Score.parse(x);
+    const three = Score.parse(Score.merge([x, x, x]));
+    return { m1: one.measures, m3: three.measures, n1: one.notes.length, n3: three.notes.length, d1: one.duration, d3: three.duration };
+  }, homrXml);
+  check('merge: bars and notes triple', merged.m3 === 3 * merged.m1 && merged.n3 === 3 * merged.n1, `${merged.m3} bars, ${merged.n3} notes`);
+  check('merge: pages play one after another', Math.abs(merged.d3 - 3 * merged.d1) < 0.5, `${merged.d1.toFixed(1)} s -> ${merged.d3.toFixed(1)} s`);
+
   // 4. Bad input gives a plain message
   const err = await page.evaluate(() => { try { Score.parse('<html>nope</html>'); return ''; } catch (e) { return e.message; } });
   check('Not MusicXML: clear error', /not a MusicXML score|not valid MusicXML/.test(err), err);
